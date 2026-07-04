@@ -15,6 +15,8 @@ import {
   Menu,
   X,
   ChevronRight,
+  ListChecks,
+  GraduationCap,
 } from "lucide-react";
 import { getAvatar } from "../utils/data";
 
@@ -36,6 +38,8 @@ const navByRole = {
     { label: "Beranda Admin", path: "/admin/dashboard", icon: LayoutDashboard },
     { label: "Manajemen Pengguna", path: "/admin/pengguna", icon: Users },
     { label: "Data Master NISN", path: "/admin/master-nisn", icon: BookOpen },
+    { label: "Kelola Soal Kuesioner", path: "/admin/kelola-soal", icon: ListChecks },
+    { label: "Kelola Jurusan", path: "/admin/kelola-jurusan", icon: GraduationCap },
   ],
 };
 
@@ -52,6 +56,8 @@ const breadcrumbMap = {
   "/admin/dashboard": [{ label: "Beranda Admin", path: "/admin/dashboard" }],
   "/admin/pengguna": [{ label: "Beranda Admin", path: "/admin/dashboard" }, { label: "Manajemen Pengguna", path: null }],
   "/admin/master-nisn": [{ label: "Beranda Admin", path: "/admin/dashboard" }, { label: "Data Master NISN", path: null }],
+  "/admin/kelola-soal": [{ label: "Beranda Admin", path: "/admin/dashboard" }, { label: "Kelola Soal Kuesioner", path: null }],
+  "/admin/kelola-jurusan": [{ label: "Beranda Admin", path: "/admin/dashboard" }, { label: "Kelola Jurusan", path: null }],
 };
 
 function getBreadcrumbs(pathname) {
@@ -93,15 +99,17 @@ function ProfileDropdown({ user, profileOpen, setProfileOpen, profileRef, compac
             <div className="px-4 py-2 text-xs text-gray-500 border-b border-gray-100 capitalize font-medium">
               {user.role.replace("_", " ")} — @{user.username}
             </div>
+            {user.role !== "admin" && (
+              <button
+                onClick={() => { navigate("/pengaturan-akun"); setProfileOpen(false); }}
+                className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition flex items-center gap-2 min-h-[44px]"
+              >
+                <Settings size={14} />
+                Pengaturan Akun
+              </button>
+            )}
             <button
-              onClick={() => { console.log("navigate settings"); navigate("/pengaturan-akun"); setProfileOpen(false); }}
-              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition flex items-center gap-2 min-h-[44px]"
-            >
-              <Settings size={14} />
-              Pengaturan Akun
-            </button>
-            <button
-              onClick={() => { console.log("logout clicked"); onLogout(); setProfileOpen(false); }}
+              onClick={() => { onLogout(); setProfileOpen(false); }}
               className="w-full text-left px-4 py-3 text-sm text-error hover:bg-error-light/50 transition flex items-center gap-2 min-h-[44px]"
             >
               <LogOut size={14} />
@@ -150,7 +158,6 @@ export default function Layout({ children }) {
   // handleLogout is a plain function, NOT a hook — safe to define before the early return.
   // MUST be before the early return to ensure every render has the same hook identity count.
   const handleLogout = () => {
-    console.log("logout clicked");
     try {
       logout();
     } catch (err) {

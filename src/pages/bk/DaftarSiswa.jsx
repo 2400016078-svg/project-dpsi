@@ -94,7 +94,7 @@ export default function DaftarSiswa() {
         {(() => {
           const withAnalysis = students.map((s) => ({
             ...s,
-            analisis: s.status_kuesioner === "selesai" ? analisisMinat(s.skor_multimedia, s.skor_tbsm) : null,
+            analisis: s.status_kuesioner === "selesai" ? analisisMinat(s.scores) : null,
           }));
 
           const filtered = filterPrioritas === "semua"

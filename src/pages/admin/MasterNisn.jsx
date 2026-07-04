@@ -3,7 +3,8 @@ import * as XLSX from "xlsx";
 import { Card, Button, Input, Table, Badge, Select } from "../../components/UI";
 import { getMasterNisnList, addMasterNisn, deleteMasterNisn, isMasterClaimed, deleteAllMasterAndStudents, getGuruBkUserList, getGuruBkName } from "../../services/supabaseAuth";
 import { getGuruBkLoadForAngkatan, getSmallestGuruBk, insertMasterNisnBatch } from "../../services/supabaseData";
-import { Plus, Trash2, BookOpen, X, AlertTriangle, AlertOctagon, Upload, FileSpreadsheet, Loader, CheckCircle, RefreshCw, Clock, UserCheck } from "lucide-react";
+import { downloadTemplate } from "../../utils/excelImport";
+import { Plus, Trash2, BookOpen, X, AlertTriangle, AlertOctagon, Upload, Download, FileSpreadsheet, Loader, CheckCircle, RefreshCw, Clock, UserCheck } from "lucide-react";
 
 export default function MasterNisn() {
   const [list, setList] = useState([]);
@@ -131,6 +132,19 @@ export default function MasterNisn() {
   };
 
   /* ───────── Bulk Import ───────── */
+
+  const handleDownloadTemplate = async () => {
+    await downloadTemplate(
+      "template_master_nisn.xlsx",
+      ["nisn", "nama_siswa", "angkatan_tahun"],
+      [
+        { nisn: "0012345678", nama_siswa: "Budi Santoso", angkatan_tahun: 2026 },
+        { nisn: "0087654321", nama_siswa: "Siti Nurhaliza", angkatan_tahun: 2026 },
+      ],
+      [16, 28, 16],
+      [0], // nisn (column A) forced to Text format so leading zeros survive
+    );
+  };
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
@@ -271,6 +285,9 @@ export default function MasterNisn() {
           >
             Kosongkan Semua Data Master
           </Button>
+          <Button variant="outline" onClick={handleDownloadTemplate} icon={Download}>
+            Unduh Template
+          </Button>
           <Button onClick={() => setShowImport(true)} icon={Upload}>
             Impor Data
           </Button>
@@ -316,7 +333,7 @@ export default function MasterNisn() {
             {!importReport ? (
               <div className="space-y-4">
                 <p className="text-sm text-gray-600">
-                  Unggah file <strong>.xlsx</strong> atau <strong>.csv</strong> dengan kolom: <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">nisn, nama_siswa, angkatan_tahun</code>.
+                  Unggah file <strong>.xlsx</strong> atau <strong>.csv</strong> dengan kolom: <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">nisn, nama_siswa, angkatan_tahun</code>. Belum yakin formatnya? Klik "Unduh Template" di atas.
                 </p>
 
                 <div className="space-y-1.5">

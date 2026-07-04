@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../store/AuthContext";
 import { Card, Button, Chart } from "../../components/UI";
 import { getSiswaProfileByUserId } from "../../services/supabaseAuth";
-import { getQuestions, submitKuesioner, getResultBySiswaId } from "../../services/supabaseData";
+import { getActiveQuestions, submitKuesioner, getResultBySiswaId } from "../../services/supabaseData";
 import { ClipboardList, ArrowLeft, ArrowRight, CheckCircle, Send, Target, Home } from "lucide-react";
 
 export default function Kuesioner() {
@@ -33,7 +33,7 @@ export default function Kuesioner() {
         setLoading(false);
         return;
       }
-      const qs = await getQuestions();
+      const qs = await getActiveQuestions();
       setQuestions(qs);
       setLoading(false);
     })();
@@ -76,7 +76,7 @@ export default function Kuesioner() {
             Persentase Kecocokan
           </h3>
           <div className="p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl">
-            <Chart skorMultimedia={result.skor_multimedia} skorTbsm={result.skor_tbsm} />
+            <Chart scores={result.scores} />
           </div>
         </Card>
         <Card>

@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../../store/AuthContext";
 import { Card, Button, Badge, Chart } from "../../components/UI";
-import { getResultBySiswaId, getNotesByResultId } from "../../services/supabaseData";
+import { getResultBySiswaId, getNotesByResultId, getActiveJurusan } from "../../services/supabaseData";
+import { getJurusanColor } from "../../utils/jurusanColors";
 import { getActiveLinkCode, createLinkCode, revokeActiveLinkCodes, getGuruBkName, getSiswaProfileByUserId } from "../../services/supabaseAuth";
 import { ClipboardList, Target, MessageSquareText, BookOpen, AlertTriangle, KeyRound, Copy, RefreshCw, Check, Clock } from "lucide-react";
 
@@ -19,6 +20,7 @@ export default function SiswaDashboard() {
   const [generating, setGenerating] = useState(false);
   const [guruBkNama, setGuruBkNama] = useState("");
   const [guruBkLoaded, setGuruBkLoaded] = useState(false);
+  const [jurusanList, setJurusanList] = useState([]);
 
   const loadLinkCode = async (siswaId) => {
     const active = await getActiveLinkCode(siswaId);
@@ -42,6 +44,8 @@ export default function SiswaDashboard() {
         }
       }
       await loadLinkCode(p.id);
+      const jur = await getActiveJurusan();
+      setJurusanList(jur);
       if (p.id_guru_bk) {
         try {
           console.log("SiswaDashboard id_guru_bk:", p.id_guru_bk);
@@ -193,7 +197,14 @@ export default function SiswaDashboard() {
         ) : (
           <>
             <p className="text-sm text-gray-600 mb-3">
-              Silakan mengisi kuesioner minat dan kepribadian untuk mengetahui kecocokan Anda terhadap jurusan <strong>Multimedia/DKV</strong> dan <strong>TBSM</strong>.
+              Silakan mengisi kuesioner minat dan kepribadian untuk mengetahui kecocokan Anda terhadap jurusan{" "}
+              {jurusanList.map((j, i) => (
+                <span key={j.id}>
+                  <strong>{j.nama}</strong>
+                  {i < jurusanList.length - 2 ? ", " : i === jurusanList.length - 2 ? " dan " : ""}
+                </span>
+              ))}
+              .
             </p>
             <div className="p-3 bg-warning-light text-warning rounded-xl text-sm mb-4 flex items-start gap-2">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -211,7 +222,7 @@ export default function SiswaDashboard() {
             Hasil Analisis Minat
           </h3>
           <div className="p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl">
-            <Chart skorMultimedia={result.skor_multimedia} skorTbsm={result.skor_tbsm} />
+            <Chart scores={result.scores} />
           </div>
           <div className="mt-4 p-3 bg-blue-50 text-blue-800 rounded-xl text-sm">
             <strong>Rekomendasi Jurusan:</strong> {result.rekomendasi_final}
@@ -243,14 +254,15 @@ export default function SiswaDashboard() {
       <Card>
         <h3 className="text-h3 font-semibold mb-2">Informasi Jurusan</h3>
         <div className="space-y-2 text-sm">
-          <div className="p-3 bg-blue-50 text-blue-700 rounded-xl flex items-start gap-2">
-            <BookOpen size={16} className="mt-0.5 shrink-0" />
-            <span><strong>Multimedia / DKV:</strong> Desain grafis, animasi, fotografi, videografi, dan industri kreatif digital.</span>
-          </div>
-          <div className="p-3 bg-accent-teal-light text-accent-teal rounded-xl flex items-start gap-2">
-            <BookOpen size={16} className="mt-0.5 shrink-0" />
-            <span><strong>TBSM (Teknik dan Bisnis Sepeda Motor):</strong> Otomotif, perbaikan mesin, bisnis sparepart, dan kewirausahaan teknik.</span>
-          </div>
+          {jurusanList.map((j, i) => {
+            const color = getJurusanColor(i);
+            return (
+              <div key={j.id} className={`p-3 ${color.bg} ${color.text} rounded-xl flex items-start gap-2`}>
+                <BookOpen size={16} className="mt-0.5 shrink-0" />
+                <span><strong>{j.nama}:</strong> {j.deskripsi}</span>
+              </div>
+            );
+          })}
         </div>
       </Card>
     </div>

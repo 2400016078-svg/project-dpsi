@@ -521,6 +521,7 @@ export async function deleteStudentCompletely(studentUserId) {
       const resultIds = results ? results.map((r) => r.id) : [];
 
       if (resultIds.length > 0) {
+        await supabase.from("kuesioner_result_scores").delete().in("id_result", resultIds);
         await supabase.from("bk_notes").delete().in("id_result", resultIds);
         await supabase.from("kuesioner_results").delete().eq("id_siswa", siswaId);
       }
@@ -578,6 +579,7 @@ export async function deleteAllStudents() {
       const resultIds = allResults ? allResults.map((r) => r.id) : [];
 
       if (resultIds.length > 0) {
+        await supabase.from("kuesioner_result_scores").delete().in("id_result", resultIds);
         await supabase.from("bk_notes").delete().in("id_result", resultIds);
         await supabase.from("kuesioner_results").delete().in("id_siswa", siswaIds);
       }
@@ -631,6 +633,7 @@ export async function deleteAllMasterAndStudents() {
       const resultIds = allResults ? allResults.map((r) => r.id) : [];
 
       if (resultIds.length > 0) {
+        await supabase.from("kuesioner_result_scores").delete().in("id_result", resultIds);
         await supabase.from("bk_notes").delete().in("id_result", resultIds);
         await supabase.from("kuesioner_results").delete().in("id_siswa", siswaIds);
       }

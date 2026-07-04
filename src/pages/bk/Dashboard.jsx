@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, EmptyState } from "../../components/UI";
 import { useAuth } from "../../store/AuthContext";
-import { getSiswaByGuruBk, getResults, getBkNotes } from "../../services/supabaseData";
-import { Users, ClipboardCheck, Clock, Monitor, Wrench, RefreshCw } from "lucide-react";
+import { getSiswaByGuruBk, getResults, getBkNotes, getJurusan } from "../../services/supabaseData";
+import { getJurusanColor } from "../../utils/jurusanColors";
+import { Users, ClipboardCheck, Clock, GraduationCap, RefreshCw } from "lucide-react";
 
 export default function BkDashboard() {
   const { user } = useAuth();
   const [siswas, setSiswas] = useState([]);
   const [results, setResults] = useState([]);
   const [notes, setNotes] = useState([]);
+  const [jurusanList, setJurusanList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -16,10 +18,11 @@ export default function BkDashboard() {
   const fetchData = useCallback(async (isRefresh) => {
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const [s, r, n] = await Promise.all([getSiswaByGuruBk(user?.id), getResults(), getBkNotes()]);
+      const [s, r, n, jur] = await Promise.all([getSiswaByGuruBk(user?.id), getResults(), getBkNotes(), getJurusan()]);
       setSiswas(s || []);
       setResults(r);
       setNotes(n);
+      setJurusanList(jur);
       setLastUpdated(new Date());
     } catch (err) {
       console.error("fetchData error:", err.message);
@@ -34,16 +37,26 @@ export default function BkDashboard() {
   const totalSiswa = siswas.length;
   const sudahMengerjakan = siswas.filter((s) => s.status_kuesioner === "selesai").length;
   const belumMengerjakan = totalSiswa - sudahMengerjakan;
-  const siswaDenganNote = results.filter((r) => notes.some((n) => n.id_result === r.id)).length;
-  const rekomendasiMM = results.filter((r) => r.rekomendasi_final === "Multimedia / DKV").length;
-  const rekomendasiTBSM = results.filter((r) => r.rekomendasi_final === "TBSM").length;
+  // getResults()/getBkNotes() return data for ALL Guru BK, not just this one — every
+  // metric below must only ever count this Guru BK's own students (siswas, already
+  // scoped via getSiswaByGuruBk), otherwise counts leak across Guru BK accounts.
+  const siswaIds = new Set(siswas.map((s) => s.id));
+  const myResults = results.filter((r) => siswaIds.has(r.id_siswa));
+  const siswaDenganNote = myResults.filter((r) => notes.some((n) => n.id_result === r.id)).length;
+  const rekomendasiPerJurusan = jurusanList.map((j) => ({
+    id: j.id,
+    nama: j.nama,
+    count: myResults.filter((r) => r.rekomendasi_final === j.nama).length,
+  }));
 
   const metrics = [
     { label: "Total Siswa", value: totalSiswa, icon: Users, color: "text-primary-dark", bg: "bg-blue-50" },
     { label: "Sudah Kuesioner", value: sudahMengerjakan, icon: ClipboardCheck, color: "text-success", bg: "bg-success-light" },
     { label: "Belum Kuesioner", value: belumMengerjakan, icon: Clock, color: "text-warning", bg: "bg-warning-light" },
-    { label: "Rekom. Multimedia / DKV", value: rekomendasiMM, icon: Monitor, color: "text-info", bg: "bg-cyan-50" },
-    { label: "Rekom. TBSM", value: rekomendasiTBSM, icon: Wrench, color: "text-accent-orange", bg: "bg-accent-orange-light" },
+    ...rekomendasiPerJurusan.map((r, i) => {
+      const color = getJurusanColor(i);
+      return { label: `Rekom. ${r.nama}`, value: r.count, icon: GraduationCap, color: color.text, bg: color.bg };
+    }),
   ];
 
   return (
@@ -85,14 +98,15 @@ export default function BkDashboard() {
         <Card>
           <h2 className="text-h3 font-semibold mb-3">Rekomendasi Minat</h2>
           <div className="flex flex-wrap gap-4 text-sm">
-            <span className="flex items-center gap-1.5">
-              <Monitor size={16} className="text-info" />
-              Multimedia / DKV: <strong>{rekomendasiMM}</strong> siswa
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Wrench size={16} className="text-accent-orange" />
-              TBSM: <strong>{rekomendasiTBSM}</strong> siswa
-            </span>
+            {rekomendasiPerJurusan.map((r, i) => {
+              const color = getJurusanColor(i);
+              return (
+                <span key={r.id} className="flex items-center gap-1.5">
+                  <GraduationCap size={16} className={color.text} />
+                  {r.nama}: <strong>{r.count}</strong> siswa
+                </span>
+              );
+            })}
             <span className="text-gray-400">|</span>
             <span className="text-success font-medium">{sudahMengerjakan} total sudah kuesioner</span>
           </div>
@@ -100,8 +114,8 @@ export default function BkDashboard() {
       )}
       <Card>
         <h2 className="text-h3 font-semibold mb-2">Ringkasan Catatan</h2>
-        <p className="text-sm">Siswa sudah diberi catatan: <strong>{siswaDenganNote}</strong> dari <strong>{results.length}</strong> yang sudah mengerjakan.</p>
-        <p className="text-sm text-gray-500 mt-1">Belum diberi catatan: <strong>{results.length - siswaDenganNote}</strong></p>
+        <p className="text-sm">Siswa sudah diberi catatan: <strong>{siswaDenganNote}</strong> dari <strong>{myResults.length}</strong> yang sudah mengerjakan.</p>
+        <p className="text-sm text-gray-500 mt-1">Belum diberi catatan: <strong>{myResults.length - siswaDenganNote}</strong></p>
       </Card>
     </div>
   );

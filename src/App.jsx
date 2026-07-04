@@ -17,6 +17,8 @@ import OrtuDashboard from "./pages/orangtua/Dashboard";
 import AdminDashboard from "./pages/admin/Dashboard";
 import ManajemenPengguna from "./pages/admin/ManajemenPengguna";
 import MasterNisn from "./pages/admin/MasterNisn";
+import KelolaSoal from "./pages/admin/KelolaSoal";
+import KelolaJurusan from "./pages/admin/KelolaJurusan";
 import PengaturanAkun from "./pages/PengaturanAkun";
 
 function HomeRedirect() {
@@ -51,6 +53,8 @@ function AppRoutes() {
         <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={["admin"]}><AdminDashboard /></ProtectedRoute>} />
         <Route path="/admin/pengguna" element={<ProtectedRoute allowedRoles={["admin"]}><ManajemenPengguna /></ProtectedRoute>} />
         <Route path="/admin/master-nisn" element={<ProtectedRoute allowedRoles={["admin"]}><MasterNisn /></ProtectedRoute>} />
+        <Route path="/admin/kelola-soal" element={<ProtectedRoute allowedRoles={["admin"]}><KelolaSoal /></ProtectedRoute>} />
+        <Route path="/admin/kelola-jurusan" element={<ProtectedRoute allowedRoles={["admin"]}><KelolaJurusan /></ProtectedRoute>} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

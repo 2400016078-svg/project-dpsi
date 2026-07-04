@@ -107,7 +107,7 @@ export default function DetailSiswa() {
           Grafik Minat
         </h3>
         <div className="p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl">
-          <Chart skorMultimedia={result.skor_multimedia} skorTbsm={result.skor_tbsm} />
+          <Chart scores={result.scores} />
         </div>
         <div className="mt-4 p-3 bg-blue-50 text-blue-800 rounded-xl text-sm">
           <strong>Rekomendasi Sistem:</strong> {result.rekomendasi_final}
@@ -115,7 +115,7 @@ export default function DetailSiswa() {
       </Card>
 
       {user?.role === "guru_bk" && (() => {
-        const analysis = result ? analisisMinat(result.skor_multimedia, result.skor_tbsm) : null;
+        const analysis = result ? analisisMinat(result.scores) : null;
         return (
           <Card>
             <h3 className="text-h3 font-semibold mb-3 flex items-center gap-2">
@@ -123,7 +123,7 @@ export default function DetailSiswa() {
               Analisis Minat <span className="text-xs text-gray-400 font-normal">(untuk Guru BK)</span>
             </h3>
             {!analysis ? (
-              <p className="text-sm text-gray-400">Siswa belum mengerjakan kuesioner.</p>
+              <p className="text-sm text-gray-400">Belum ada data skor jurusan untuk dianalisis.</p>
             ) : (
               <div className="space-y-3">
                 <div>

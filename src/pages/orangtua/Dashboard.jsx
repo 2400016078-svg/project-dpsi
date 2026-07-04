@@ -84,7 +84,7 @@ export default function OrtuDashboard() {
               Hasil Analisis Minat
             </h3>
             <div className="p-4 bg-gradient-to-br from-blue-50 to-cyan-50 rounded-2xl">
-              <Chart skorMultimedia={result.skor_multimedia} skorTbsm={result.skor_tbsm} />
+              <Chart scores={result.scores} />
             </div>
             <div className="mt-4 p-3 bg-blue-50 text-blue-800 rounded-xl text-sm">
               <strong>Rekomendasi Jurusan:</strong> {result.rekomendasi_final}

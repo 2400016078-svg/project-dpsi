@@ -1,5 +1,6 @@
 import { Component } from "react";
 import { AlertCircle, HelpCircle } from "lucide-react";
+import { getJurusanColor } from "../utils/jurusanColors";
 
 export function Card({ children, className = "" }) {
   return (
@@ -82,40 +83,34 @@ export function Select({ label, value, onChange, options, className = "" }) {
   );
 }
 
-export function Chart({ skorMultimedia, skorTbsm }) {
-  const maxVal = Math.max(skorMultimedia, skorTbsm, 1);
+export function Chart({ scores }) {
+  if (!scores || scores.length === 0) return null;
+  // Each jurusan's skor is already an independent 0-100 percentage, so bars are
+  // sized directly against that fixed scale rather than relative to the top score.
+  const topSkor = Math.max(...scores.map((s) => s.skor));
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-body-small">
-          <span className="font-medium text-primary-dark">Multimedia / DKV</span>
-          <span className="font-semibold text-primary-dark">{skorMultimedia}%</span>
-        </div>
-        <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-700"
-            style={{
-              width: `${(skorMultimedia / maxVal) * 100}%`,
-              background: "linear-gradient(90deg, #3B82F6, #60A5FA)",
-            }}
-          />
-        </div>
-      </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between text-body-small">
-          <span className="font-medium text-accent-teal">TBSM</span>
-          <span className="font-semibold text-accent-teal">{skorTbsm}%</span>
-        </div>
-        <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className="h-full rounded-full transition-all duration-700"
-            style={{
-              width: `${(skorTbsm / maxVal) * 100}%`,
-              background: "linear-gradient(90deg, #0D9488, #14B8A6)",
-            }}
-          />
-        </div>
-      </div>
+      {scores.map((s, i) => {
+        const color = getJurusanColor(i);
+        const isTop = s.skor === topSkor && topSkor > 0;
+        return (
+          <div key={s.id_jurusan || s.nama} className="space-y-1.5">
+            <div className="flex items-center justify-between text-body-small">
+              <span className={`font-medium ${color.text} inline-flex items-center gap-1.5`}>
+                {s.nama}
+                {isTop && <Badge color="green" size="sm">Rekomendasi</Badge>}
+              </span>
+              <span className={`font-semibold ${color.text}`}>{s.skor}%</span>
+            </div>
+            <div className="h-4 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{ width: `${Math.min(s.skor, 100)}%`, background: color.hex }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

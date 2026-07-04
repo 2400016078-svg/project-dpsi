@@ -1293,3 +1293,490 @@ Additionally, even when the check works correctly, the order `setProfileOpen(fal
 - The toggle button to open/close the dropdown still works.
 - `npm run build` passes.
 
+## 47. Kelola Soal Kuesioner (Admin) — Bank Soal CRUD
+
+### Overview
+New admin page `src/pages/admin/KelolaSoal.jsx` at route `/admin/kelola-soal` (nav item "Kelola Soal Kuesioner" in `Layout.jsx`). Lets Admin add, edit, and delete questionnaire questions (`questions` table), grouped by jurusan. Backed by `addQuestion()`, `updateQuestion()`, `deleteQuestion()` in `supabaseData.js`.
+
+> **Update (see § 48):** grouping/dropdown now reads from the dynamic `jurusan` table via `id_jurusan`, not the old fixed `klaster_jurusan` string. `klaster_jurusan` is kept on the table for historical rows but no longer written by the app.
+
+### Bug fix — 409 "duplicate key value violates unique constraint questions_pkey" on add
+**Symptom:** Adding a new question via the admin form always failed with an HTTP 409 from PostgREST, even though `addQuestion()` never set `id` in the insert payload (only `{ teks_pertanyaan, klaster_jurusan }`).
+
+**Root cause:** Not a code bug — `questions.id` is a serial/identity column with a working sequence default (confirmed: inserting with `id` omitted still returns `23505 duplicate key`, not a `NOT NULL` violation, which would happen if there were no default at all). The seed script (`seedSupabase.js` → `SEED_QUESTIONS` in `seed.js`) inserts the 20 seed questions with **explicit** `id: 1..20` values for cross-environment consistency. Explicit-`id` inserts in Postgres bypass the column's sequence — `nextval()` is never advanced — so the sequence was still sitting at 1 while rows 1–20 already existed. The first `addQuestion()` call then asked Postgres for the next id (1), which collided with the existing seed row.
+
+Verified live against the project's Supabase instance (anon key, `POST /rest/v1/questions` with only `teks_pertanyaan`/`klaster_jurusan`): reproduced `23505 duplicate key value violates unique constraint "questions_pkey"`, confirming the sequence-desync diagnosis.
+
+**Code:** `addQuestion()`/`updateQuestion()`/`deleteQuestion()` in `supabaseData.js` and the caller in `KelolaSoal.jsx` already only ever send `{ teks_pertanyaan, klaster_jurusan }` on insert — no manual `id`, `max(id)+1`, or `count+1` logic exists anywhere in the app code. No app-code change was needed.
+
+**DB fix (must be run once in the Supabase SQL Editor):**
+```sql
+SELECT setval(
+  pg_get_serial_sequence('questions', 'id'),
+  (SELECT COALESCE(MAX(id), 0) FROM questions) + 1,
+  false
+);
+```
+This resyncs the sequence to `MAX(id) + 1` regardless of the sequence's actual name, so the next insert gets a fresh, non-colliding id. Safe to re-run any time (idempotent).
+
+### Verification
+- `npm run build` passes.
+- Reproduced the 409 directly against Supabase REST API before any DB fix (see above) — confirms root cause.
+- **Pending:** re-verify `addQuestion()` succeeds end-to-end (admin adds a question, no 409, it appears in the admin list, and shows up in the student `Kuesioner.jsx` flow) **after** the `setval(...)` fix above is run in Supabase, since this environment's client only holds the anon/publishable key (no service-role key), which cannot execute DDL/sequence fixes.
+
+## 48. Jurusan Dinamis — mendukung N jurusan (bukan cuma 2)
+
+### Overview
+Multimedia/DKV & TBSM were hardcoded everywhere: the questionnaire scoring formula, the `Chart` component's two fixed props, `analisisMinat()`'s two-argument signature, and several UI strings. This phase makes the number of jurusan fully data-driven — an Admin can add/edit/delete jurusan, questions attach to a jurusan via FK, and scoring/charts/analysis all adapt to however many jurusan exist.
+
+### DB migration (`sql_jurusan_dinamis_migration.sql`, run once in Supabase SQL Editor)
+1. **New `jurusan` table** — `id uuid default gen_random_uuid()`, `kode` (unique), `nama`, `deskripsi`, `created_at`. Seeded with the 2 existing jurusan (`multimedia_dkv`, `tbsm`) via `on conflict (kode) do nothing` (safe to re-run). RLS: `for all to anon/authenticated using (true) with check (true)`, same pattern as the rest of the app's tables.
+2. **`questions.id_jurusan`** — new nullable `uuid references jurusan(id)` column, backfilled from the old `klaster_jurusan` text column via a `kode` match. The old column is kept (harmless, unused by app code going forward) but its **`NOT NULL` constraint had to be dropped** — a real bug caught during verification: without it, `addQuestion()` (which only ever sends `id_jurusan` now) failed with `23502 null value in column "klaster_jurusan"` for every new question. Fixed with `alter table questions alter column klaster_jurusan drop not null;`.
+3. **New `kuesioner_result_scores` table** — `{id, id_result → kuesioner_results, id_jurusan → jurusan, skor, created_at}`, unique on `(id_result, id_jurusan)`. This replaces the fixed `skor_multimedia`/`skor_tbsm` columns as the source of truth for "score per jurusan for this result" — one row per jurusan per result, so any N works. Same RLS pattern as `jurusan`.
+4. **Migrated the 1 existing real result** (and would migrate any seed results) from `kuesioner_results.skor_multimedia`/`skor_tbsm` into `kuesioner_result_scores`, then dropped `NOT NULL` on both legacy columns (new submissions leave them `null` — verified live, see below). The columns are **not dropped**, only relaxed, so nothing about the old schema is destroyed.
+
+### Code changes
+- **`src/services/supabaseData.js`** — added `getJurusan()`, `addJurusan()`, `updateJurusan()`, `deleteJurusan()` (blocks deletion with a friendly message if the jurusan still has questions or result-scores, checked via `count: "exact", head: true` queries — questions checked first). `getQuestions()` now embeds `jurusan(id, kode, nama, created_at)` via the FK (PostgREST auto-embed). `addQuestion()`/`updateQuestion()` take `idJurusan` instead of `klasterJurusan`. `getResultBySiswaId()`/`getResults()` embed `kuesioner_result_scores(id_jurusan, skor, jurusan(...))` and flatten it into a `.scores` array per result via `mapResultScores()`, **always sorted by the jurusan's `created_at`** (insertion order) — never by score value, so a chart's color-to-jurusan mapping never shifts when scores change (dataviz skill: "color follows the entity, never its rank"). `getStudentsBimbingan()` now returns `scores` (array) instead of `skor_multimedia`/`skor_tbsm`.
+- **`submitKuesioner()` — rewritten for N jurusan:** sums each answered question's `nilai_jawaban` into its jurusan bucket, averages per jurusan by that jurusan's own question count (fair when jurusan have different question counts — same idea as before, just generalized from 2 buckets to a loop over `getJurusan()`), then scales every jurusan's average against the sum of *all* jurusan averages so the percentages sum to ~100 regardless of N. Recommendation = `argmax` over the per-jurusan scores. Inserts one `kuesioner_result_scores` row per jurusan (letting the DB generate `id` — no manual id, learned from the § 47 sequence bug). Jurusan with zero questions are excluded from scoring (would produce a meaningless 0% dragging down everyone else).
+- **`src/components/UI.jsx` `Chart`** — now takes `scores: [{id_jurusan, nama, skor}]` instead of `skorMultimedia`/`skorTbsm` and renders one labeled bar per entry.
+- **`src/utils/jurusanColors.js`** (new) — fixed-order categorical palette, `[blue, teal, orange, violet, pink, amber]`, slots 1–2 intentionally matching the original Multimedia (blue) / TBSM (teal) colors so the 2-jurusan look is unchanged. Validated CVD-safe via the dataviz skill's `validate_palette.js` (all 4 checks pass, worst adjacent ΔE 53.4). Shared between `Chart` bars and the BK dashboard/rekap metric tiles so a jurusan's color is consistent app-wide.
+- **`src/utils/analisisMinat.js`** — now takes `scores: [{nama, skor}]` (any N) instead of two numbers. Finds the top and runner-up, uses `gap = top - runnerUp` alongside the top score to pick among the same 3 tiers (`jelas_condong` / `cenderung` / `seimbang`); for exactly 2 jurusan this reduces to the exact old behavior (gap is a direct function of the top score when 2 scores sum to 100), so no regression for existing data.
+- **New admin page `src/pages/admin/KelolaJurusan.jsx`** (route `/admin/kelola-jurusan`, nav item "Kelola Jurusan", admin-only) — list/add/edit/delete jurusan (kode, nama, deskripsi), delete confirmation, blocked with an explicit count-based message if questions or results still reference it.
+- **`src/pages/admin/KelolaSoal.jsx`** — jurusan dropdown and question grouping now come from `getJurusan()` instead of the hardcoded `CANONICAL_JURUSAN`/`JURUSAN_LABELS`.
+- **Display pages updated to the new `scores`/`Chart`/`analisisMinat` shapes:** `siswa/Kuesioner.jsx`, `siswa/Dashboard.jsx` (also: "Informasi Jurusan" cards and the "kecocokan Anda terhadap jurusan X, Y dan Z" copy now generate from `getJurusan()` instead of 2 hardcoded `<div>`s/a hardcoded sentence), `bk/DetailSiswa.jsx`, `bk/DaftarSiswa.jsx`, `bk/Dashboard.jsx` (recommendation count tiles now `jurusanList.map(...)` instead of 2 fixed `Monitor`/`Wrench` tiles), `bk/Rekapitulasi.jsx` (average-score chart and recommendation tiles both generalized to N jurusan), `orangtua/Dashboard.jsx`.
+
+### Verification performed (live against the project's Supabase instance, anon key)
+Since I only hold the anon/publishable key (no service-role key, no SQL execution endpoint), the SQL migration had to be run manually by the user in the Supabase SQL Editor before this could be verified — I confirmed the table/column/RLS state via REST afterward rather than assuming success:
+1. Confirmed `jurusan` table existed with the 2 seeded rows, all 22 existing `questions` had `id_jurusan` backfilled (0 nulls), and the 1 pre-existing real result was migrated into `kuesioner_result_scores` with its original values (69.23 / 30.77) intact.
+2. Hit the `NOT NULL` bug on `questions.klaster_jurusan` live (see above), had the user run the one-line fix, and reproduced a successful insert afterward.
+3. **Full 3-jurusan simulation:** inserted a temporary 3rd jurusan + 2 questions via REST, then ran a Node script that replicates `submitKuesioner()`'s exact algorithm against a real un-submitted student (24 total questions across 3 jurusan, deterministic distinct answers per jurusan). Result: scores `{Multimedia: 45.45, TBSM: 18.18, Test jurusan: 36.36}` — **sum 99.99** (matches, modulo independent per-jurusan rounding to 2 decimals — the same rounding behavior the original 2-jurusan formula already had, not a regression), recommendation correctly picked the highest (`Multimedia / DKV`). Confirmed the nested `kuesioner_results → kuesioner_result_scores → jurusan` embed query returns exactly the shape `mapResultScores()` expects, and `skor_multimedia`/`skor_tbsm` on the new result are `null` as intended.
+4. Confirmed `deleteJurusan()`'s guard: the temp jurusan had 2 questions + 1 result-score row still pointing at it, both counts came back `> 0`, so deletion would correctly be blocked.
+5. Deleted all temporary rows (result, result-scores, responses, questions, jurusan) and reverted the test student's `status_kuesioner` back to `belum_dikerjakan` — confirmed final state matches pre-test exactly (2 jurusan, 22 questions, 1 real result).
+6. `npm run build` and `npx oxlint` pass with no new warnings/errors introduced by this change.
+
+### How to verify manually (UI)
+1. Log in as Admin → confirm existing 2 jurusan, questions, and any existing results still display exactly as before (no regression).
+2. Admin → **Kelola Jurusan** → add a 3rd jurusan (kode/nama/deskripsi) → confirm it appears in the list.
+3. Admin → **Kelola Soal** → add 1–2 questions for the new jurusan → confirm the jurusan dropdown includes it and the question list groups it under its own card.
+4. Log in as a student who hasn't submitted → confirm "Informasi Jurusan" now shows 3 cards and the intro sentence names all 3 → complete the questionnaire (now includes the new jurusan's questions) → submit → confirm the result chart shows 3 bars whose percentages sum to 100 and the recommendation names the correct (highest-scoring) jurusan.
+5. Log in as that student's Guru BK → open their detail page → confirm the chart and "Analisis Minat" text both reference all 3 jurusan sensibly (top jurusan + gap-based tier).
+6. Check Orang Tua view and BK Rekapitulasi/Dashboard pages render 3 bars/tiles instead of 2.
+7. Confirm an **older** result (from before the 3rd jurusan existed) still displays correctly with only its original 2 jurusan/bars — it should not show a 0% bar for the new jurusan, since that student never answered questions for it.
+8. Try deleting the 3rd jurusan while it still has questions/results attached → confirm a clear Indonesian error naming the count, not a raw Postgres error.
+
+## 49. Bug fixes — delete question FK violation & duplicate submit (post § 48)
+
+Two regressions surfaced after the jurusan-dinamis migration (§ 48) added `id_jurusan`-based question grouping and per-jurusan scoring. Both are pure app-code fixes in `src/services/supabaseData.js` — no schema change required, and the `sql_jurusan_dinamis_migration.sql` file does not need to be re-run for these.
+
+### Bug 1 — deleting a question failed with FK violation
+**Symptom:** Admin → Kelola Soal → Hapus on any question that a student had already answered failed with `update or delete on table "questions" violates foreign key constraint "kuesioner_responses_id_soal_fkey" ... still referenced from table "kuesioner_responses"`.
+
+**Fix (`deleteQuestion(id)`):** now deletes the question's own rows from `kuesioner_responses` (`.eq("id_soal", id)`) first, and only deletes the `questions` row if that succeeds. The confirmation dialog in `KelolaSoal.jsx` (`confirmDelete` card, "Apakah Anda yakin?") is unchanged — this is purely a reordering of the two deletes inside `deleteQuestion()`, not a UI change.
+
+### Bug 2 — submitting the questionnaire failed with duplicate key
+**Symptom:** `Kirim Hasil Tes` sometimes failed with `duplicate key value violates unique constraint "unique_siswa_soal"` on `kuesioner_responses`. Cause: a prior submit attempt for the same student had already inserted `kuesioner_responses` rows (e.g. the request failed after that insert but before the `kuesioner_results` row was created), so the `existing` result guard at the top of `submitKuesioner()` didn't trip (no result row yet), and the next attempt's insert collided with the student's own leftover rows on `(id_siswa, id_soal)`.
+
+**Fix (`submitKuesioner(siswaId, responses)`):** before inserting the new responses, it now deletes any existing `kuesioner_responses` for that `id_siswa` (`.eq("id_siswa", siswaId)`), so the insert can never collide with leftovers from an earlier failed attempt. Chose delete-then-insert over `upsert(..., { onConflict: "unique_siswa_soal" })` since the app only ever writes a student's full response set once per successful submit — a plain re-insert after clearing is simpler than reasoning about partial upserts.
+
+**Result save/display unaffected:** per-jurusan scores are still written to `kuesioner_result_scores` (one row per jurusan, no manual `id`) after the responses insert succeeds, and `Kuesioner.jsx` renders `res.data.scores` via `Chart` immediately on submit; `getResultBySiswaId()` returns the same shape on reload, so the result page and the "sudah mengisi" locked state both keep working.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Soal** → delete a question that a completed student already answered → confirm it succeeds with "Soal berhasil dihapus." and no FK error in the console.
+2. As a student who has **not** yet submitted, open the browser console/network tab, submit the questionnaire once successfully → confirm the result chart appears and `status_kuesioner` becomes `selesai`.
+3. To specifically re-exercise bug 2: for a student whose `kuesioner_responses` exist but who has **no** `kuesioner_results` row yet (simulate by deleting only their `kuesioner_results`/`kuesioner_result_scores` rows in Supabase while leaving `kuesioner_responses` in place), load `/siswa/kuesioner` and submit again → confirm it completes without a duplicate-key error and the new scores/result display correctly.
+
+## 50. Jurusan Soft-Delete (Nonaktifkan, bukan Hapus)
+
+### Overview
+Previously `deleteJurusan()` hard-deleted the `jurusan` row and was blocked (with a friendly message) whenever the jurusan still had questions or result-scores attached — meaning a jurusan with any real student history could never be removed. This replaces hard delete with a reversible `is_active` toggle: Admin can always deactivate a jurusan (no blocker), student data is never touched, and it can be reactivated at any time.
+
+### DB migration (`sql_jurusan_soft_delete_migration.sql`, run once in Supabase SQL Editor)
+```sql
+alter table jurusan add column if not exists is_active boolean not null default true;
+```
+That's the only schema change — no other table is touched, so every existing question/response/result keeps its current FK exactly as-is.
+
+### Code changes
+- **`src/services/supabaseData.js`**:
+  - `deleteJurusan()` removed entirely (and with it the `HAS_QUESTIONS`/`HAS_RESULTS` blocker logic — no longer needed since nothing is destroyed).
+  - Added `deactivateJurusan(id)` / `activateJurusan(id)` — each is a single `update({ is_active })` call, no existence checks, since flipping a flag can never violate a FK or orphan any row.
+  - Added `getActiveJurusan()` — same as `getJurusan()` but `.eq("is_active", true)`. Used everywhere a jurusan is offered for **new** activity.
+  - `getQuestions()`'s embedded `jurusan(...)` select now also includes `is_active`, so callers can tell whether a question's jurusan is still active without a second query.
+  - Added `getActiveQuestions()` — `getQuestions()` filtered to `q.jurusan?.is_active === true`. Used to build a new questionnaire attempt and to score a new submission.
+  - `submitKuesioner()` now sources its jurusan/question buckets from `getActiveQuestions()` / `getActiveJurusan()` instead of the unfiltered versions, so a deactivated jurusan can never receive a new score and its questions never appear in a new attempt — while every already-existing `kuesioner_responses`/`kuesioner_result_scores` row keeps pointing at the same jurusan row untouched.
+  - `getResultBySiswaId()` / `getResults()` / `mapResultScores()` are **unchanged** — they still embed-join `jurusan` unconditionally, so a historical result's jurusan `nama`/`kode` displays exactly as before regardless of `is_active`. This is what keeps old results intact per the requirement.
+
+- **`src/pages/siswa/Kuesioner.jsx`** — loads questions via `getActiveQuestions()` instead of `getQuestions()`, so a student starting a **new** attempt only ever sees questions from active jurusan.
+- **`src/pages/siswa/Dashboard.jsx`** — the pre-submission "Informasi Jurusan" cards and the "kecocokan Anda terhadap jurusan X, Y dan Z" sentence now load `getActiveJurusan()` instead of `getJurusan()` (these describe the *upcoming* questionnaire, not any student's existing result — the existing-result chart above it still renders from `result.scores`, untouched and unaffected by any jurusan's active status).
+- **`src/pages/admin/KelolaSoal.jsx`** — the Jurusan `<Select>` when adding/editing a question now only lists active jurusan (`jurusanOptions()`). If the question being edited already belongs to a jurusan that has since been deactivated, that one option is added back labeled `"Nama (Nonaktif)"` so opening the edit form never silently reassigns it. The question list itself still groups by **all** jurusan (active + inactive) — an inactive jurusan's card shows a gray "Nonaktif" badge next to its name — so Admin can still see/edit/delete existing questions that belong to a deactivated jurusan.
+- **`src/pages/admin/KelolaJurusan.jsx`** — "Hapus" replaced with:
+  - **Nonaktifkan** (danger button, `Ban` icon) — active jurusan only, opens a confirmation card ("Nonaktifkan jurusan ini?") explaining that existing soal/hasil are unaffected and it can be reactivated later, then calls `deactivateJurusan()`.
+  - **Aktifkan** (secondary button, `Power` icon) — inactive jurusan only, calls `activateJurusan()` directly (no confirmation — reactivating is low-risk and fully reversible by deactivating again).
+  - Table/mobile cards gained a **Status** column/badge (`Aktif` green / `Nonaktif` gray) and inactive rows render at `opacity-60` for an at-a-glance visual distinction.
+- **`src/pages/bk/Dashboard.jsx`** and **`src/pages/bk/Rekapitulasi.jsx`** — deliberately **left unchanged** (still call `getJurusan()`, the full list). These are aggregate/historical reports (recommendation counts, average scores across all submitted results to date); restricting them to active-only would hide legitimate historical counts for a jurusan that was later deactivated, which would violate "do not hide or break old results." Only the four call sites that represent genuinely *new* activity (questionnaire, Kelola Soal dropdown, new-submission scoring, and the siswa dashboard's pre-submission description) were switched to active-only.
+
+### Why old results stay intact
+`kuesioner_result_scores.id_jurusan` and `questions.id_jurusan` are plain FK columns pointing at `jurusan.id` — deactivating only flips `jurusan.is_active`, it never deletes or reassigns those rows, and the read-side queries (`getResultBySiswaId`, `getResults`, `getQuestions`'s admin listing) never filter on `is_active`. So a student's result computed before a jurusan was deactivated keeps showing that jurusan's name/score exactly as before, on the student's own dashboard, the Guru BK detail/rekap pages, and the Orang Tua dashboard — none of which query `getJurusan()`/`getActiveJurusan()` at all; they all render directly from the embedded `jurusan` data already attached to each result.
+
+### How to verify manually (UI)
+1. Run the SQL migration above in Supabase SQL Editor.
+2. Admin → **Kelola Jurusan** → confirm every existing jurusan shows an "Aktif" badge and a "Nonaktifkan" button (no more "Hapus").
+3. Deactivate a jurusan that already has questions and student results attached → confirm it succeeds immediately (no "masih memiliki hasil kuesioner" block), the row/card greys out with a "Nonaktif" badge, and an "Aktifkan" button appears in its place.
+4. Admin → **Kelola Soal** → confirm the deactivated jurusan no longer appears in the "Jurusan" dropdown when adding a new question, but its existing questions still show in their own card (grouped under the jurusan name with a "Nonaktif" badge) and can still be edited/deleted.
+5. Open an existing question that belongs to the now-inactive jurusan → confirm the dropdown still shows its correct jurusan (labeled "(Nonaktif)") instead of blanking out or silently switching to a different one; save without changing it and confirm it stays on the same jurusan.
+6. Log in as a student who has **not yet submitted** → confirm "Informasi Jurusan" and the intro sentence on the dashboard, plus the actual questionnaire, no longer include the deactivated jurusan's card/questions.
+7. Log in as a student whose **existing result** references the now-inactive jurusan (submitted before deactivation) → confirm their result chart, recommendation text, and jurusan name still display exactly as before, on their own dashboard, their Guru BK's detail page, and the Orang Tua dashboard.
+8. Check **BK Dashboard** and **BK Rekapitulasi** → confirm the deactivated jurusan's historical recommendation count / average score tile is still shown (not hidden), since those pages report on all-time data.
+9. Admin → **Kelola Jurusan** → click "Aktifkan" on the deactivated jurusan → confirm it immediately returns to the active list, and reappears in the Kelola Soal dropdown and a not-yet-submitted student's questionnaire/info cards.
+
+## 51. Bulk Import Soal & Jurusan (Admin)
+
+### Overview
+Extends the existing Data Master NISN bulk-import pattern (§ 35) to two more admin pages: **Kelola Soal Kuesioner** (import questions) and **Kelola Jurusan** (import jurusan). Same library (`xlsx`/SheetJS), same modal shape (upload → validate → insert → summary report), same Indonesian messaging conventions. No schema change — both target tables (`questions`, `jurusan`) already exist.
+
+### Shared helper — `src/utils/excelImport.js` (new)
+Factored out of the inline logic in `MasterNisn.jsx` (which is untouched) since the same two operations are now needed in two more places:
+- `readSpreadsheetFile(file)` — same FileReader + `XLSX.read`/`sheet_to_json({ defval: "" })` parsing MasterNisn.jsx already used, reads `.csv` as text and `.xlsx`/`.xls` as an array buffer.
+- `downloadTemplate(filename, headers, exampleRows)` — new: builds a one-sheet workbook via `XLSX.utils.json_to_sheet(exampleRows, { header: headers })` and triggers a download via `XLSX.writeFile`. Used by both new "Unduh Template" buttons.
+
+### Part A — Import Soal (`src/pages/admin/KelolaSoal.jsx`)
+- **"Unduh Template Soal"** button downloads `template_soal.xlsx` with headers `teks_pertanyaan, kode_jurusan` and 2 example rows (one per seeded jurusan).
+- **"Impor Soal"** button opens a modal (same shape as the NISN import modal): file picker (`.xlsx`/`.xls`/`.csv`) → validate → summary report.
+- **Validation per row:** blank rows (both columns empty) are silently skipped and not counted; a row with `kode_jurusan` given but no `teks_pertanyaan` is skipped and reported ("Teks pertanyaan kosong"). `kode_jurusan` is matched case-insensitively against **active jurusan only** (`jurusanList.filter(j => j.is_active)` — the same full list already loaded for the page, keyed by lowercase `kode`); no match (including a kode that exists but is deactivated) is skipped and reported ("Kode jurusan tidak ditemukan atau tidak aktif").
+- **Insert:** valid rows become `{ teks_pertanyaan, id_jurusan }` and go through a new `insertQuestionsBatch()` in `supabaseData.js` — a single batched `insert()`, no `id` sent (same reasoning as `addQuestion()`, see § 47's sequence bug note).
+- **Report:** total soal added, total skipped, and a scrollable per-row skip reason list (baris number + kode + alasan) — same shape as the NISN import's `skippedDetail`.
+- `load()` re-runs after a successful import so the new questions appear immediately, grouped under their jurusan card like any other question.
+
+### Part B — Import Jurusan (`src/pages/admin/KelolaJurusan.jsx`)
+- **"Unduh Template Jurusan"** button downloads `template_jurusan.xlsx` with headers `kode, nama, deskripsi` and 1 example row.
+- **"Impor Jurusan"** button opens the same modal shape.
+- **Validation per row:** blank rows skipped silently; missing `kode` or `nama` skipped and reported. `kode` is checked case-insensitively against every existing jurusan (**active and inactive** — a kode must stay globally unique regardless of active status, matching the DB's `unique` constraint from § 48) and against kodes already queued earlier in the same file, to catch in-file duplicates before they'd hit the DB constraint. `deskripsi` is optional (stored as `null` if blank).
+- **Insert:** valid rows become `{ kode, nama, deskripsi }` and go through a new `insertJurusanBatch()` — `is_active` is left unset so the column default (`true`, from § 50) applies; every imported jurusan starts active.
+- **Report:** same total-added/total-skipped/skip-reason-list shape as Part A.
+- `load()` re-runs after import so new jurusan appear immediately in the table, and become selectable right away in Kelola Soal's dropdown and the student questionnaire.
+
+### Not changed
+- `MasterNisn.jsx`'s own import flow is untouched — it keeps its inline `readFile`/parsing logic rather than being refactored onto the new shared util, to avoid touching a working, unrelated feature.
+- Both import actions insert in a single batched `supabase.insert(array)` call, same as the existing NISN batch import — if a row slips past client-side de-duplication and collides with a DB constraint, the whole batch fails together (reported as "Gagal menyimpan data ke database."). This mirrors the accepted limitation of the existing NISN import rather than introducing new per-row transaction handling.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Soal** → click "Unduh Template Soal" → confirm an `.xlsx` downloads with the two example rows and correct headers.
+2. Fill in a few more rows (including one with a `kode_jurusan` that doesn't exist, and one with an empty `teks_pertanyaan`) → click "Impor Soal" → upload the file → confirm the summary shows the correct added/skipped counts and the skip reasons match.
+3. Confirm the newly imported questions appear immediately in the correct jurusan group without a manual page refresh.
+4. Add a row targeting a jurusan you've deactivated (§ 50) → confirm it is skipped with "Kode jurusan tidak ditemukan atau tidak aktif".
+5. Admin → **Kelola Jurusan** → click "Unduh Template Jurusan" → confirm the `.xlsx` downloads correctly.
+6. Fill in 2-3 new jurusan plus one row reusing an existing `kode` (active or inactive) and one in-file duplicate `kode` → click "Impor Jurusan" → confirm only the genuinely new rows are added, and the other two are reported as skipped with the right reasons.
+7. Confirm newly imported jurusan appear immediately in the table (as "Aktif"), and are immediately selectable in Kelola Soal's "Tambah Soal" jurusan dropdown and in a not-yet-submitted student's questionnaire.
+
+## 52. Smart Jurusan Delete + Full Cascade Student Delete (Demo Reset Path)
+
+### Overview
+Two changes that together let Admin reset the app to a clean demo state without ever risking real student data:
+1. **Kelola Jurusan's "Hapus" button is smart** — clean hard-delete when the jurusan is unused, automatic archive (soft-delete) when it isn't. No SQL change; no separate hard-delete path existed before this (§ 50 only had deactivate/activate).
+2. **All three student-deletion cascades** (single delete, "Kosongkan Semua Data Siswa", and the Master NISN wipe) now also delete `kuesioner_result_scores` — the one table added by § 48 that predates all of them and was previously left as an orphan risk (mitigated in practice by that table's `on delete cascade` FK to `kuesioner_results`, but now deleted explicitly too so the app-level cascade doesn't depend on that DB detail).
+
+No SQL to run for this feature — `jurusan.is_active` (§ 50) and `kuesioner_result_scores` (§ 48) already exist, and both already have permissive `for all to anon` RLS policies from their original migrations, which covers `DELETE`.
+
+### Feature 1 — `deleteJurusan(id)` in `src/services/supabaseData.js`
+Replaces the removed § 50 hard-delete with a smart version:
+1. Counts `questions` rows where `id_jurusan = id`.
+2. Counts `kuesioner_result_scores` rows where `id_jurusan = id`.
+3. If either count is `> 0` → calls the existing `deactivateJurusan(id)` (sets `is_active = false`) and returns `{ success: true, archived: true, message: "Jurusan diarsipkan karena masih dipakai data siswa; data siswa tetap aman." }`.
+4. Otherwise → hard `delete()`s the `jurusan` row and returns `{ success: true, archived: false, message: "Jurusan dihapus." }`.
+
+`deactivateJurusan`/`activateJurusan` (§ 50) are both kept — the smart delete reuses `deactivateJurusan` internally, and `activateJurusan` still powers the "Aktifkan" button for already-archived jurusan.
+
+**`src/pages/admin/KelolaJurusan.jsx`:**
+- The button is labeled **"Hapus"** again (danger, `Trash2` icon) on every row, active or inactive — clicking it always opens the same confirmation card ("Hapus jurusan ini?", explaining that it will either delete permanently or archive depending on whether it's still in use) before calling `deleteJurusan()`. This lets Admin re-attempt "Hapus" on an already-archived jurusan later (e.g. after clearing students) to finally get the clean delete.
+- **"Aktifkan"** (secondary, `Power` icon) still appears only on inactive rows, unchanged from § 50, with no confirmation (low-risk, fully reversible).
+- The single flat table (all jurusan, active + inactive, with the `Aktif`/`Nonaktif` `Badge` and `opacity-60` styling from § 50) is unchanged — there's no separate "archived" section, since greying out inactive rows in the same list already satisfies the "visually distinct" requirement without extra UI.
+- Whatever `deleteJurusan()` returns (`"Jurusan dihapus."` or `"Jurusan diarsipkan..."`) is shown as the page's normal green success banner; either way the row either disappears (hard delete) or flips to the greyed "Nonaktif" state (archive) — from the Admin's point of view the jurusan is gone from active use in both cases.
+
+### Feature 2 — cascade delete order in `src/services/supabaseAuth.js`
+Added one line — `await supabase.from("kuesioner_result_scores").delete().in("id_result", resultIds);` — immediately before the existing `bk_notes` delete, in all three functions that already delete a student's `kuesioner_results`:
+- **`deleteStudentCompletely(studentUserId)`** — single "Hapus" on a siswa row (`ManajemenPengguna.jsx`).
+- **`deleteAllStudents()`** — "Kosongkan Semua Data Siswa" bulk action (`ManajemenPengguna.jsx`, `HAPUS` type-to-confirm).
+- **`deleteAllMasterAndStudents()`** — "Kosongkan Semua Data Master" (`MasterNisn.jsx`, `KOSONGKAN` type-to-confirm) — not explicitly named in the request but shares the exact same orphan risk (it also deletes `kuesioner_results` for every student), so it received the same fix for consistency.
+
+Full order per student/batch is now: `kuesioner_result_scores` → `bk_notes` → `kuesioner_results` → `kuesioner_responses` → `link_codes` → linked `orang_tua_profiles` + its `users` row → `siswa_profiles` → `master_nisn.is_claimed = false` → the student's own `users` row. This matches the requested order exactly (`kuesioner_result_scores` first, since it FKs to `kuesioner_results` which is deleted right after `bk_notes`).
+
+**No UI changes** — the confirmation dialogs (single: "Apakah Anda yakin...", bulk: `HAPUS`/`KOSONGKAN` type-to-confirm) are untouched; only the underlying cascade functions in `supabaseAuth.js` gained the one extra delete each.
+
+**Left alone on purpose:** `deleteSupabaseUser()` (the generic delete used for admin/guru_bk/orang_tua rows) has its own much smaller `role === "siswa"` branch that only unclaims the NISN and deletes `siswa_profiles` — it's dead code from the Admin UI's perspective (siswa rows always route through `deleteStudentCompletely` instead, per `ManajemenPengguna.jsx`'s `handleDeleteConfirm`), predates this task, and wasn't in the requested scope.
+
+### The end-to-end "clean demo reset" scenario, traced through
+1. Start with a jurusan that has real questions attached **and** at least one student's submitted result scored against it → clicking "Hapus" on it archives it (`qCount > 0`).
+2. Admin → **Kelola Jurusan** (or **Manajemen Pengguna**) → clear all students, either one at a time or via "Kosongkan Semua Data Siswa" → every `kuesioner_result_scores` row for every jurusan is now gone (Feature 2). At this point `rCount` for that jurusan is `0` — but if it still has `questions` rows, `qCount` is still `> 0`, so clicking "Hapus" on it again **still archives, not hard-deletes**. This is correct, not a bug: the jurusan is still "used" by its own bank soal, independent of student data.
+3. To actually free it for a clean hard-delete, Admin also removes its questions via **Kelola Soal**'s existing per-question "Hapus" (§ 49's FK-safe `deleteQuestion`, unaffected by this change).
+4. With both `qCount` and `rCount` at `0`, Admin → **Kelola Jurusan** → "Hapus" on that jurusan now hard-deletes it (`"Jurusan dihapus."`) and it disappears from the table entirely.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Soal** → add a question under some jurusan X. Log in as a student and submit the questionnaire (or use an existing seeded result that scores jurusan X). Admin → **Kelola Jurusan** → "Hapus" on jurusan X → confirm the success message says **"Jurusan diarsipkan karena masih dipakai data siswa; data siswa tetap aman."**, the row flips to greyed "Nonaktif" with an "Aktifkan" button, and jurusan X disappears from the student questionnaire, the Kelola Soal "Tambah Soal" dropdown, and the siswa dashboard's "Informasi Jurusan" cards (per § 50) — while the already-submitted result's chart/recommendation for jurusan X still displays correctly everywhere (student dashboard, Guru BK detail, Orang Tua dashboard, BK Rekapitulasi/Dashboard tiles).
+2. Add a brand-new jurusan with **no** questions and **no** results → "Hapus" on it → confirm the message says **"Jurusan dihapus."** and the row disappears from the table completely (not just greyed).
+3. Admin → **Manajemen Pengguna** → "Hapus" on a single siswa who has a submitted result → in Supabase, confirm `kuesioner_result_scores` rows for that student's result are gone (no orphans pointing at a deleted `kuesioner_results` row), along with everything else in the cascade.
+4. Admin → **Manajemen Pengguna** → "Kosongkan Semua Data Siswa" (type `HAPUS`) → confirm the same, for every student at once, and that admin/guru_bk accounts plus the `questions`/`jurusan` tables are untouched.
+5. Full reset scenario: after step 4, go delete jurusan X's remaining questions in **Kelola Soal**, then go back to **Kelola Jurusan** and "Hapus" jurusan X again → confirm it now hard-deletes ("Jurusan dihapus.") since nothing references it anymore.
+
+## 53. Template Downloads Match the Import Parser Exactly
+
+### Overview
+"Unduh Template Soal" and "Unduh Template Jurusan" (§ 51) now generate files whose headers, example content, and column widths are deliberately shaped around the actual import parsers in `KelolaSoal.jsx`/`KelolaJurusan.jsx`, instead of being a plausible-looking but loosely-matched example.
+
+### `downloadTemplate()` in `src/utils/excelImport.js`
+Gained an optional 4th parameter, `colWidths` — an array of character widths (SheetJS's `wch` unit), same order as `headers`. When provided, it's applied as `ws["!cols"] = colWidths.map(wch => ({ wch }))`. Verified by generating both templates with a standalone script and inspecting the raw `sheet1.xml` inside the produced `.xlsx`: the `<cols>` element carries the correct per-column widths, and `sheet_to_json()` on the same file reproduces exactly the intended headers/rows.
+
+### Part A — Template Soal (`KelolaSoal.jsx`'s `handleDownloadTemplate`)
+- Headers: `teks_pertanyaan, kode_jurusan, catatan` — the first two are exactly what `handleImport()` validates for and reads per row (`row.teks_pertanyaan`, `row.kode_jurusan`); `catatan` is a third, purely informational column the import parser never reads (extra properties on a parsed row are simply ignored), so it's safe to leave in a file the user re-uploads after editing.
+- 2 example rows, deliberately using `kode_jurusan` values (`rpl`, `kul`) that are **not** necessarily real jurusan in this install — the `catatan` cell on the first row spells out the actual constraint: *"Isi kode_jurusan sesuai kode di menu Kelola Jurusan (mis. multimedia_dkv, tbsm, tkj, si)."* This is the "third helper column" option from the request (chosen over a cell comment since a visible cell reads reliably in every spreadsheet app, whereas comment/note rendering varies and is easy to miss).
+- Column widths: `[60, 16, 55]` — wide for the question text, narrow for the short jurusan code, wide again for the note.
+
+### Part B — Template Jurusan (`KelolaJurusan.jsx`'s `handleDownloadTemplate`)
+- Headers: `kode, nama, deskripsi` — unchanged, matches `handleImport()` exactly.
+- Now 2 example rows (`tkj`, `rpl`) instead of 1, for symmetry with the soal template.
+- Column widths: `[12, 30, 55]` — narrow for the short kode, medium for nama, wide for deskripsi.
+
+### Known limitation — header row is NOT bold
+The request also asked for a bold header row. This was investigated and found **not achievable** with the `xlsx` package version already used everywhere else in the app (`xlsx@0.18.5`, the free SheetJS Community Edition): cell styling (`ws[cell].s = { font: { bold: true } }`) is silently dropped when writing `.xlsx` in this build — confirmed empirically by writing a test file with a bold style set on a cell, then inspecting the output `styles.xml`, which contained only the single default (non-bold) font with no style applied to any cell. Column widths, by contrast, **are** written correctly (also confirmed by inspecting the XML) since those live in a different, unrestricted part of the file format. Real bold-header support would require switching the template generator to a different library (e.g. `exceljs`, which supports writing cell styles) — not done here to avoid adding a new, fairly large dependency for a cosmetic detail on an admin-only download button. Flagging this explicitly rather than shipping code that sets a style property with no visible effect.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Soal** → click "Unduh Template Soal" → open the downloaded `.xlsx` → confirm columns are `teks_pertanyaan` (wide), `kode_jurusan` (narrow), `catatan` (wide) with 2 example rows, and the catatan note on row 2 correctly explains that `kode_jurusan` must match a real code from Kelola Jurusan.
+2. Delete the two example rows, fill in your own soal (leaving `catatan` blank or deleting that column entirely), save, and re-upload via "Impor Soal" → confirm it imports correctly (the parser ignores the extra `catatan` column either way).
+3. Admin → **Kelola Jurusan** → click "Unduh Template Jurusan" → confirm columns are `kode` (narrow), `nama` (medium), `deskripsi` (wide) with 2 example rows, then re-upload via "Impor Jurusan" after editing to confirm it still imports correctly.
+4. Note: the header row will display in the same regular (non-bold) font as the rest of the sheet when opened in Excel/Google Sheets/LibreOffice — see the limitation above.
+
+## 54. Standardized "Unduh Template" Across All Three Import Features (Bold Headers Solved)
+
+### Overview
+All three admin bulk-import features — **Data Master NISN**, **Kelola Soal**, **Kelola Jurusan** — now have a matching "Unduh Template" button next to their "Impor ..." button, each producing an `.xlsx` whose headers are verified to exactly match what that page's own import parser reads, with exactly 2 example rows and nothing else. This also finally solves the § 53 "header can't be bold" limitation.
+
+### Column names verified against each import parser (not just assumed)
+Before touching the templates, the exact expected headers were re-confirmed by reading each `handleImport()`'s validation line and per-row field access:
+- **Master NISN** (`MasterNisn.jsx`): `headers.includes("nisn") / "nama_siswa" / "angkatan_tahun"`, then `row.nisn`, `row.nama_siswa`, `row.angkatan_tahun`. Template: **`nisn, nama_siswa, angkatan_tahun`**.
+- **Kelola Soal** (`KelolaSoal.jsx`): `headers.includes("teks_pertanyaan") / "kode_jurusan"`, then `row.teks_pertanyaan`, `row.kode_jurusan`. Template: **`teks_pertanyaan, kode_jurusan`** — the extra `catatan` helper column added in § 53 is **removed** again; this request asked for exactly these two headers with nothing else, and the parser never needed the third column anyway (it only ever read the first two by exact key).
+- **Kelola Jurusan** (`KelolaJurusan.jsx`): `headers.includes("kode") / "nama"` (deskripsi optional), then `row.kode`, `row.nama`, `row.deskripsi`. Template: **`kode, nama, deskripsi`**.
+
+### Bold headers — now actually solved
+§ 53 documented that `xlsx@0.18.5` (SheetJS Community Edition, the same library used for parsing everywhere) silently drops cell styling when *writing* `.xlsx` — verified empirically at the time by inspecting the output `styles.xml` and finding no bold font applied. Rather than accept that limitation again, `downloadTemplate()` in `src/utils/excelImport.js` was rewritten to **post-process** the file SheetJS produces:
+1. Build the workbook with SheetJS exactly as before (`json_to_sheet` + `!cols` for column widths), then `XLSX.write(wb, { type: "array", bookType: "xlsx" })` to get the raw zip bytes — this part is unstyled, as always.
+2. Load that zip with the new **`jszip`** dependency (`npm install jszip`, ~90 KB gzipped added to the bundle — chosen over `exceljs`, which § 53 rejected for being a much larger full spreadsheet-writing library, since here only two small XML files inside an already-valid zip need editing).
+3. Patch `xl/styles.xml`: append one bold `<font>` and one matching `<xf>` in `<cellXfs>`, computing the new font/style index from the existing `count` attributes rather than assuming a fixed index.
+4. Patch `xl/worksheets/sheet1.xml`: give every cell in row 1 (the header row) the new bold style index (`s="N"`).
+5. Re-zip with `zip.generateAsync({ type: "blob" })` and trigger the download manually (a small `<a>`/`URL.createObjectURL` helper), since `XLSX.writeFile` is no longer in the loop.
+
+This was verified empirically before wiring it into the UI: a standalone script generated a template, inspected the resulting `styles.xml` (confirmed `<fonts count="2">` with the second font carrying `<b/>`, and `<cellXfs count="2">` with the new `xf` referencing that bold font), confirmed the header cells in `sheet1.xml` carry the new style index, and confirmed the file still re-parses cleanly with `XLSX.readFile` (not corrupted). `downloadTemplate()` is now `async` — all three callers `await` it.
+
+### "Text" format for NISN — solved the same way
+The `nisn` column needs to survive both the example rows *and* whatever the Admin types below them without Excel eating leading zeros (Excel's default "General" cell format re-interprets typed digits as a number). The examples themselves (`"0012345678"` as a JS string) already come out as text automatically — the real problem is new rows added later. Fixed via the same styles.xml/sheet1.xml patch: a `numFmt` with code `"@"` (Text) is added, and applied both to the `nisn` column's existing example cells *and* to the `<col>` element's own `style` attribute — the latter is what makes Excel keep treating **new** cells typed into that column as Text, not just the pre-filled examples. `downloadTemplate()` takes this as an optional 5th argument, `textColumnIndexes` (0-based column indexes) — only Master NISN's call passes `[0]` for the `nisn` column; Soal and Jurusan don't need it.
+
+### Files changed
+- `src/utils/excelImport.js` — `downloadTemplate()` rewritten as described above (bold + optional per-column Text format); `readSpreadsheetFile()` unchanged.
+- `src/pages/admin/MasterNisn.jsx` — **new** "Unduh Template" button (outline style, `Download` icon) placed immediately before "Impor Data", `handleDownloadTemplate()` added, import modal's helper text updated to point at it. This page's own `readFile`/import-parsing logic is untouched (per § 51's "don't touch a working unrelated feature" call) — only the new template button was added, importing `downloadTemplate` from the shared util.
+- `src/pages/admin/KelolaSoal.jsx` — `handleDownloadTemplate()` simplified back to 2 columns (no `catatan`), examples updated to the exact wording requested, now `async`/`await`s the call.
+- `src/pages/admin/KelolaJurusan.jsx` — `handleDownloadTemplate()` examples updated to `rpl`/Rekayasa Perangkat Lunak and `akl`/Akuntansi dan Keuangan Lembaga, now `async`/`await`s the call.
+- `package.json` / `package-lock.json` — added `jszip`.
+
+### How to verify manually (UI)
+1. Admin → **Data Master NISN** → click the new "Unduh Template" button (next to "Impor Data") → open the `.xlsx` → confirm headers `nisn, nama_siswa, angkatan_tahun` are **bold**, 2 example rows (`0012345678`/Budi Santoso/2026, `0087654321`/Siti Nurhaliza/2026), and the `nisn` column keeps its leading zeros. Type a brand-new NISN like `0011223344` into a fresh row in that same column → confirm Excel/Sheets keeps it as text (doesn't silently become `11223344`).
+2. Delete the two example rows, fill in real NISN data, save, and re-upload via "Impor Data" → confirm it imports with no changes needed.
+3. Admin → **Kelola Soal** → click "Unduh Template Soal" → confirm headers `teks_pertanyaan, kode_jurusan` (only these two, no `catatan`) are bold, with the 2 requested example rows → re-upload after editing via "Impor Soal" to confirm it still imports correctly.
+4. Admin → **Kelola Jurusan** → click "Unduh Template Jurusan" → confirm headers `kode, nama, deskripsi` are bold, with the `rpl`/`akl` example rows → re-upload after editing via "Impor Jurusan" to confirm it still imports correctly.
+5. In all three, confirm column widths look sensible (wide text columns, narrow code columns) and that the header row is visibly bolder than the data rows when opened in Excel, LibreOffice Calc, or Google Sheets.
+
+## 55. Independent Per-Jurusan Scoring (Replaces Normalize-to-100)
+
+### Overview
+Changed the questionnaire scoring model. Previously every jurusan's score was normalized so all jurusan percentages summed to 100% — with only 2 jurusan the top score could reasonably reach 60-80%, but as Admin adds more jurusan (§ 50/51 made jurusan fully dynamic) the same 100% gets divided among more competitors, so the top jurusan's percentage shrinks toward 100/N regardless of how strongly the student actually answered (reported symptom: top score only ~15% with several jurusan). Scoring is now **independent per jurusan**: each jurusan's percentage reflects only how strongly the student answered *that jurusan's own questions*, unaffected by how many other jurusan exist.
+
+### New formula — `submitKuesioner()` in `src/services/supabaseData.js`
+For each jurusan with at least one answered question: `avg = sum of that jurusan's Likert (1-5) answers / count of those questions`, then `skor = round((avg / 5) * 100, 2 decimals)`. Example: answers 5,4,5,4,4 → avg 4.4 → **88%**. Percentages no longer sum to 100 across jurusan — a student who answers strongly on every jurusan can score high on all of them simultaneously, and adding a new jurusan to the questionnaire no longer shrinks anyone else's score.
+- Jurusan with zero answered questions are filtered out before the average is computed (`countByJurusan[j.id] > 0`), so there is never a divide-by-zero — same guard as before, just applied to the new formula.
+- `rekomendasi_final` = the jurusan with the highest `skor` (`Array.reduce` with strict `>`). Ties go to whichever jurusan appears first in `jurusanList`, which is fetched via `getActiveJurusan()` ordered by `created_at` ascending — i.e. the earliest-created jurusan wins ties, exactly as requested.
+- `kuesioner_result_scores.skor` still stores this number — **no schema change**, the column was already a plain numeric with no sum-to-100 constraint anywhere in the DB.
+
+### Display changes
+- **`Chart` component (`src/components/UI.jsx`)** — bars now size directly off the fixed 0-100 scale (`width: ${Math.min(s.skor, 100)}%`) instead of relative to the highest score in the current result (`s.skor / maxVal`). A green "Rekomendasi" `Badge` is now shown next to whichever jurusan has the highest `skor` in the list, so the recommended jurusan stays visually obvious even though bars are no longer forced into a 0-100 range that sums to 100. Per-jurusan bar/text color still comes from `getJurusanColor(index)` using the array's original (created_at) order — deliberately **not** re-sorted by score first, so a given jurusan keeps the same color everywhere in the app (Chart, "Informasi Jurusan" cards, admin tables) instead of its color shifting depending on how it ranked for a particular student.
+- Every screen that renders `<Chart scores={result.scores} />` picks this up automatically with no further changes: student result page ("Persentase Kecocokan" in `Kuesioner.jsx`) and "Hasil Analisis Minat" (`siswa/Dashboard.jsx`), Guru BK's "Grafik Minat" (`bk/DetailSiswa.jsx`), Orang Tua's "Hasil Analisis Minat" (`orangtua/Dashboard.jsx`), and BK's angkatan-wide average chart (`bk/Rekapitulasi.jsx`, which averages the new independent `skor` values per jurusan across students — still meaningful, arguably more so, since it now reads as "average strength of interest in jurusan X across the angkatan" rather than "average share of a fixed 100%").
+
+### Guru BK "Analisis Minat" thresholds recalibrated — `src/utils/analisisMinat.js`
+The category logic (top score + gap to runner-up) was already structured the right way for N jurusan, but its threshold *values* (65 / 55, gap ≥ 10) were calibrated for the old sum-to-100 scoring, where e.g. top ≥ 65 with only 2 jurusan automatically implied a ≥30 gap. Under the new independent scale, a student answering every question "netral" (3/5) already scores **60%** on every jurusan by construction — so the old 55% "cenderung" threshold would fire on pure noise. Recalibrated:
+- `GAP_SEIMBANG = 10` — if the top jurusan is within 10 points of the runner-up, the result is now **always** "Seimbang" regardless of how high the top score itself is (a student scoring 82%/79%/76% on three jurusan is genuinely balanced, not "clearly leaning," even though 82% looks high in isolation). This directly implements "balanced if the top few are close."
+- `JELAS_CONDONG_THRESHOLD = 75` (top averaged ~3.75/5 "setuju" or higher) **and** well ahead (gap ≥ 10) → "Jelas Condong".
+- `CENDERUNG_THRESHOLD = 65` (clearly above the 60% neutral baseline) and well ahead → "Cenderung".
+- Otherwise (well ahead but top score still below 65, i.e. a weak lead with low absolute interest) → "Seimbang".
+- Logic order changed from "check top threshold first, gap only gates jelas_condong" to "check the gap first" so the balanced/close-cluster case is evaluated before either threshold, matching the "gap to next" framing in the request. The duplicate "Seimbang" text block (previously written out twice, once per branch) was consolidated into a single `else`.
+
+### Old vs. new results
+No backfill and no schema change. Existing `kuesioner_result_scores` rows keep whatever `skor` was computed under the old normalize-to-100 formula — they will look different from newly-submitted results (e.g. an old result might show 15%/85% while a new one for a similar student shows 62%/88%), which is expected and accepted per the request. Nothing reads `skor` as if it must sum to 100, so old rows render without errors on every page (Chart just draws whatever bar width the stored number implies; `analisisMinat` just categorizes whatever top/gap the stored numbers produce).
+
+### SQL needed
+**None.** `kuesioner_result_scores.skor` was already a plain numeric column with no CHECK constraint tying it to a 0-100-across-jurusan sum, so both old and new-formula rows fit the existing schema.
+
+### Files changed
+- `src/services/supabaseData.js` — `submitKuesioner()` scoring formula.
+- `src/components/UI.jsx` — `Chart()` bar sizing + top-jurusan "Rekomendasi" badge.
+- `src/utils/analisisMinat.js` — threshold values, gap-first branch order, de-duplicated "Seimbang" text.
+
+### Not changed (already correct as-is)
+- `src/pages/bk/Rekapitulasi.jsx` — its per-jurusan average (`jurusanAverages`) is a plain arithmetic mean of `s.scores[...].skor` across students; it doesn't assume any sum-to-100 relationship and needed no changes.
+- `src/pages/bk/DaftarSiswa.jsx` — calls `analisisMinat(s.scores)` purely to sort/badge/prioritize by the returned `category`/`priority`, which is unaffected by the internal threshold recalibration.
+- `src/utils/data.js` / `src/services/seedSupabase.js` — pre-Supabase-migration legacy code (hardcoded 2-jurusan `skor_multimedia`/`skor_tbsm` scoring). Confirmed unreferenced by any current page (only `getAvatar`/`setAvatar`/`removeAvatar` are still imported from `data.js`) and out of scope for this change.
+
+### How to verify manually (UI)
+1. Log in as a student who hasn't submitted yet, answer the questionnaire so one jurusan gets consistently high answers (4s/5s) and another gets consistently low answers (1s/2s) → submit → confirm the high-answer jurusan shows roughly `(avg/5)*100`% (e.g. mostly 5s ≈ 90-100%) and the low one shows a low percentage, and the two do **not** sum to 100.
+2. Answer a second test student with all answers at 3 ("netral") across every jurusan → submit → confirm every jurusan shows ~60%, and Guru BK's Analisis Minat on that student's detail page shows **"Seimbang"** (gap between top and runner-up should be small).
+3. On the first student's result (student dashboard "Persentase Kecocokan", Orang Tua dashboard, Guru BK → Detail Siswa "Grafik Minat"): confirm the bar for the highest-scoring jurusan is visibly the longest, carries the green "Rekomendasi" badge, and its bar length visually matches its %, not a rescaled ratio against the other bars.
+4. Guru BK → Detail Siswa on the first (clearly-differentiated) student → confirm "Analisis Minat" now shows "Jelas Condong" or "Cenderung" (not "Seimbang"), consistent with the big gap between the two jurusan.
+5. Guru BK → Rekapitulasi Angkatan → confirm the average chart still renders without error for a mix of old (pre-change) and new (post-change) results in the same angkatan.
+6. Open an existing/older student result (submitted before this change) on any of the 4 display pages → confirm it still renders (no crash, no NaN%) even though its numbers follow the old sum-to-100 convention and will look proportionally different from a newly-submitted result.
+
+## 56. Analisis Minat Card — Verified Fully Dynamic for Any Jurusan (No Hardcoding)
+
+### Overview
+Follow-up request asked to "restore and generalize" the Guru BK Analisis Minat card so it works automatically for any jurusan, including ones added in the future, with no per-jurusan code changes. Investigation (code read only, no browser test) found the card was **already fully dynamic** as of § 55 in this same working tree — nothing was actually broken or hardcoded. This section documents the verification and the one small robustness fix made.
+
+### Investigation findings
+- **Card still exists and renders on the Guru BK student-detail page:** `src/pages/bk/DetailSiswa.jsx:117-141`, inside its own `Card` titled "Analisis Minat *(untuk Guru BK)*".
+- **Guru-BK-only, confirmed:** wrapped in `{user?.role === "guru_bk" && (...)}` — a student or parent viewing the same result (their own dashboard, or `orangtua/Dashboard.jsx`) never sees this card; they only ever get the plain `Chart` + `rekomendasi_final` line, which has no analysis text.
+- **Not reading old `skor_multimedia`/`skor_tbsm` columns:** the card calls `analisisMinat(result.scores)`, where `result.scores` comes from `getResultBySiswaId()` → `mapResultScores()` in `supabaseData.js`, which selects `kuesioner_result_scores(id_jurusan, skor, jurusan(id, kode, nama, created_at))` — i.e. always the current per-jurusan table joined live to `jurusan`, never the legacy two-column fields. A repo-wide grep for `skor_multimedia`/`skor_tbsm`/hardcoded `"Multimedia"`/`"TBSM"` in the *active* code path found matches only in already-identified dead/legacy files (`src/utils/data.js`, `src/utils/seed.js`, `src/services/seedSupabase.js` — none imported by any page except `data.js`'s unrelated `getAvatar`/`setAvatar`, per § 55) and one comment in `src/utils/jurusanColors.js` explaining color slot 1-2's origin — that file's actual logic (`getJurusanColor(index)`) is purely positional/modulo and never checks a jurusan's name.
+- **`analisisMinat()` (`src/utils/analisisMinat.js`) is already name-agnostic:** it takes the `scores` array, sorts by `skor`, and builds every sentence by interpolating `top.nama` / `sorted.map(s => s.nama)` — the actual jurusan name(s) read from the DB join above. There is no `if (nama === "...")` branch anywhere. A brand-new jurusan (e.g. "Kuliner") added via Kelola Jurusan, given questions via Kelola Soal, and scored highest for some student, would have its real name appear in the generated sentence with zero code changes — traced end-to-end: `KelolaJurusan.jsx` insert → `submitKuesioner()` (uses `getActiveJurusan()`/`getActiveQuestions()`, already includes any new active jurusan) → `kuesioner_result_scores` row → `mapResultScores()` join → `analisisMinat()` → `DetailSiswa.jsx` render.
+- **3-tier logic already gap-aware and N-agnostic** (from § 55): "well ahead" (gap ≥ `GAP_SEIMBANG=10`) is checked before the score thresholds, so any number of close top jurusan collapse into "Seimbang" with all of them listed by name (`sorted.map((s) => \`${s.nama} (${s.skor}%)\`).join(", ")`); otherwise "Jelas Condong" (top ≥ 75) or "Cenderung" (top ≥ 65) with the top jurusan's real name substituted into the sentence.
+- **Judgment disclaimer already present:** the card's footer already reads *"Analisis ini bersifat indikatif berdasarkan hasil kuesioner. Keputusan dan konseling tetap sepenuhnya berdasarkan penilaian Guru BK."*
+
+**Conclusion: no rewrite was needed.** The card was not missing, not Guru-BK-leaky, and not reading stale columns or hardcoded names — § 55's scoring rework had already made it fully dynamic as a side effect of generalizing `analisisMinat.js` for N jurusan.
+
+### One fix made — inaccurate empty-state message
+`src/pages/bk/DetailSiswa.jsx:126` previously showed `"Siswa belum mengerjakan kuesioner."` when `analisisMinat(result.scores)` returns `null`. That branch can only be reached with `result.scores` being an empty array — the surrounding code already returns a separate "not found" card earlier (`if (!profile || !result)`) whenever there's no result at all, so by the time this line can render, the student *has* completed the questionnaire; there simply aren't any scored jurusan rows to analyze (a genuinely rare edge case). Changed to `"Belum ada data skor jurusan untuk dianalisis."` so the message is accurate if ever hit.
+
+### SQL needed
+**None.** No schema change — this was a verification pass plus one UI string fix.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Jurusan** → add a brand-new jurusan (e.g. "Kuliner") → **Kelola Soal** → add a few questions under it.
+2. Log in as a student who hasn't submitted yet → confirm the new jurusan appears in the questionnaire → answer its questions with high Likert values (4-5) and answer other jurusan lower → submit.
+3. Guru BK → Detail Siswa for that student → confirm the "Analisis Minat (untuk Guru BK)" card automatically mentions **"Kuliner"** by name in its sentence (e.g. "Siswa menunjukkan kecenderungan kuat ke bidang Kuliner (...%)...") — with no code having been touched for that specific jurusan name.
+4. Confirm the same card is **absent** when viewing as a student or Orang Tua (only Guru BK's own login sees it) — check the student's own dashboard and the Orang Tua dashboard for the same result; both should show only the Chart + "Rekomendasi Jurusan" line, no analysis text.
+5. Pick/construct a student result where two or more jurusan are within ~10 points of each other at the top → confirm the card shows **"Seimbang"** and lists those close jurusan by name in the explanation.
+6. Confirm the footer disclaimer ("Keputusan dan konseling tetap sepenuhnya berdasarkan penilaian Guru BK.") is still present.
+
+## 57. Bug Fix — Beranda BK Cards Counted Other Guru BK's Students
+
+### Bug
+On the Guru BK dashboard (`src/pages/bk/Dashboard.jsx`), "Total Siswa"/"Sudah Kuesioner"/"Belum Kuesioner" were correctly scoped to the logged-in Guru BK (built from `siswas`, fetched via `getSiswaByGuruBk(user.id)`), but every "Rekom. {jurusan}" card and the "Ringkasan Catatan" card were built from `results` — the return value of `getResults()`, which has **no Guru BK filter at all** and returns every `kuesioner_results` row in the database. So a Guru BK with 0 assigned students could still see "Rekom. Multimedia/DKV = 1" etc., counting some other Guru BK's student.
+
+### Fix
+Added one derived value before the metrics are computed:
+```js
+const siswaIds = new Set(siswas.map((s) => s.id));
+const myResults = results.filter((r) => siswaIds.has(r.id_siswa));
+```
+`myResults` (not the raw `results`) now feeds both `rekomendasiPerJurusan` (`myResults.filter((r) => r.rekomendasi_final === j.nama)`) and the "Ringkasan Catatan" card (`myResults.length`, `siswaDenganNote` computed against `myResults`). Since `siswas` was already correctly scoped, filtering `results` down to only the `id_siswa`s present in `siswas` makes every card on the page consistent with "Total Siswa" by construction — if `siswas` is empty, `myResults` is empty, and every Rekom card is forced to `0`.
+
+Per-jurusan cards remain fully dynamic (`jurusanList.map(...)`, one card per jurusan, no hardcoded jurusan) — only the *counting* was fixed, not the card-generation logic (already correct per § 55/56).
+
+`getResults()`/`getBkNotes()` themselves were intentionally **not** changed — they're shared, unfiltered reads also used elsewhere (e.g. BK Rekapitulasi's angkatan-wide averages intentionally look at all students in an angkatan, not just one Guru BK's — see § "not changed" note in § 55). The fix is scoped to where the leak actually was: `bk/Dashboard.jsx`'s own derivation of `rekomendasiPerJurusan` and `siswaDenganNote`.
+
+### Also noticed, not fixed (out of scope for this request)
+`src/pages/bk/RiwayatCatatan.jsx` ("Riwayat Catatan Konseling") has the same underlying pattern — it calls `getBkNotes()`/`getResults()`/`getSiswaProfiles()` with no Guru BK filter, so it lists **every** Guru BK's counseling notes, not just the logged-in Guru BK's own. Flagging this since it's the same class of bug, but the request was specifically about Beranda BK's summary cards, so this page was left untouched.
+
+### SQL needed
+**None.** Pure client-side filtering fix, no schema or query shape change.
+
+### Files changed
+- `src/pages/bk/Dashboard.jsx` — added `siswaIds`/`myResults` derivation; `rekomendasiPerJurusan` and the "Ringkasan Catatan" card now read from `myResults` instead of the unfiltered `results`.
+
+### How to verify manually (UI)
+1. Ensure at least two Guru BK accounts exist, each with different assigned students (via `kelompok`/Master NISN assignment, § 39), and that students under **both** Guru BK have submitted the questionnaire with different `rekomendasi_final` jurusan.
+2. Log in as Guru BK A whose assigned students total 0 (or a small known number) → Beranda BK → confirm "Total Siswa" matches that number, and **every** "Rekom. {jurusan}" card sums to no more than that same total (e.g. if Total Siswa = 0, every Rekom card must show 0).
+3. Log in as Guru BK B (with different assigned students) → confirm their Rekom cards reflect only *their* students' results, not Guru BK A's.
+4. Confirm "Ringkasan Catatan" ("Siswa sudah diberi catatan: X dari Y yang sudah mengerjakan") also only counts each Guru BK's own students — Y should equal that Guru BK's own "Sudah Kuesioner" count, not the site-wide total.
+5. Add a new jurusan (Kelola Jurusan) and have one of Guru BK A's students score highest in it → confirm a new "Rekom. {jurusan baru}" card appears automatically on Guru BK A's dashboard with the correct count, and shows 0 for Guru BK B if none of B's students scored that jurusan highest.
+
+### Re-verified (same bug reported again)
+The exact same bug report came in again later. Re-read `src/pages/bk/Dashboard.jsx` line by line: the `siswaIds`/`myResults` fix above is still present and correct — `rekomendasiPerJurusan` and "Ringkasan Catatan" both still derive from `myResults`, not the raw unfiltered `results`. No code regression found, so **no further code change was made**. This fix has never been committed (`git log` still shows only the two pre-session commits) — if the bug is still visible in a browser, the most likely explanation is that the tab/build being tested predates this fix (e.g. a browser tab open since before the fix, or a deployed/built copy from before this change) rather than the source itself being wrong. Hard-refresh the page (or restart `npm run dev`) against this working tree and re-check; if it still reproduces with a fresh load of this exact code, that would point to a genuinely different cause and needs a fresh bug report with what's actually observed (e.g. exact numbers shown, which Guru BK account).
+
+## 58. Bug Fix — Analisis Minat Missing for Newly-Submitted Results (Orphaned `kuesioner_results` Row)
+
+### Investigation (code read + direct read-only query against the live Supabase project, no browser/Playwright)
+Reported symptom: on the Guru BK student-detail page, the "Analisis Minat" card shows for old results but is missing for a newly-submitted (independent 0-100 scoring) result, even though the Chart's "Rekomendasi Sistem" line still shows a jurusan name.
+
+**Card-render condition, confirmed unchanged and correct:** `src/pages/bk/DetailSiswa.jsx:117-141` renders the card only for `user?.role === "guru_bk"`, and shows real analysis whenever `analisisMinat(result.scores)` returns non-null; `analisisMinat()` (`src/utils/analisisMinat.js`) only returns `null` when its `scores` argument is empty/falsy (`!scores || scores.length === 0`) — there is no code path in it that special-cases `skor_multimedia`/`skor_tbsm` or any old data shape (confirmed already in § 56).
+
+**Verified against real data, not assumption:** queried the project's actual Supabase tables directly (read-only, via the app's own anon key) rather than guessing. At the time of this investigation there was exactly one `kuesioner_results` row in the database, produced by the new independent-scoring `submitKuesioner()`, with 10 `kuesioner_result_scores` rows (92/60/60/60/56/56/72/44/68/68 — correctly *not* summing to 100, confirming independent scoring is active). Running the actual `analisisMinat()` against this exact real data returned a valid, non-null "Jelas Condong" analysis naming "Multimedia / DKV" (its real top-scoring jurusan) — i.e., the card-rendering logic itself does **not** fail on genuinely well-formed new-scoring data. So the described bug is not "analisisMinat doesn't understand the new score shape" — it already does.
+
+**Actual root cause — `submitKuesioner()` is not atomic (`src/services/supabaseData.js`):** it does two sequential inserts: `kuesioner_results` (carries `rekomendasi_final`, computed and written first) then `kuesioner_result_scores` (the actual per-jurusan bars). If the *second* insert fails for any reason (a transient network error, a dropped connection, etc. — this can happen to any insert and always could have, independent of which scoring formula is used) the function returned `{ success: false }`, but the **first insert had already committed** — leaving a permanently orphaned `kuesioner_results` row: `rekomendasi_final` set (so the Chart card's "Rekomendasi Sistem" line displays a real jurusan name), but zero `kuesioner_result_scores` rows (so `result.scores` is `[]` — the Chart's own bars render empty, and `analisisMinat([])` returns `null`, showing the "Belum ada data skor jurusan untuk dianalisis." empty state instead of a real analysis). Worse, this state is **unrecoverable by the student**: `submitKuesioner()`'s very first check, `getResultBySiswaId(siswaId)`, now finds this orphan and returns `QUESTIONNAIRE_ALREADY_SUBMITTED`, permanently blocking any retry — so once a student hits this, their result stays broken forever. This structural flaw pre-dated the independent-scoring change (the two-insert order was never atomic), but it's the same code path being asked about here and matches every symptom described exactly.
+
+### Fix
+`src/services/supabaseData.js` — `submitKuesioner()`: if the `kuesioner_result_scores` insert fails, the just-inserted `kuesioner_results` row is now deleted before returning failure:
+```js
+const { error: scoreErr } = await supabase.from("kuesioner_result_scores").insert(scoreRows);
+if (scoreErr) {
+  console.error(...);
+  await supabase.from("kuesioner_results").delete().eq("id", newResult.id);
+  return { success: false, code: "INSERT_FAILED" };
+}
+```
+This removes the orphan immediately, so `getResultBySiswaId()` no longer finds a half-written result and the student's next submit attempt starts clean instead of being permanently stuck.
+
+**Defensive hardening, `mapResultScores()` (same file):** now also coerces `skor` with `Number(s.skor)` (Postgres `numeric` columns can be returned as strings by some client/library combinations) and drops any row where that isn't finite (`Number.isFinite`), rather than letting a malformed/legacy row silently produce `NaN` inside Chart's bar width or analisisMinat's threshold comparisons. This is defense-in-depth on top of the real fix above — it doesn't change behavior for well-formed rows (verified: the real 10-score result above still maps to the exact same numbers, still `typeof "number"`, and still produces the same "Jelas Condong" analysis after this change).
+
+### Not changed (already correct, reconfirmed)
+`analisisMinat.js` and the `DetailSiswa.jsx` render condition needed no changes — § 56 and this investigation's live-data test both confirm they already work generically for any jurusan and any non-empty independent score set.
+
+### SQL needed
+**None.** No schema change. (If a Guru BK is currently looking at a student stuck in the orphaned state described above from *before* this fix, the cleanest recovery is for Admin to delete that one student's `kuesioner_results` row — `delete from kuesioner_results where id_siswa = '<id_siswa>' and id not in (select id_result from kuesioner_result_scores)` — after which the student can resubmit normally; going forward this fix prevents new orphans from being created at all.)
+
+### Files changed
+- `src/services/supabaseData.js` — `submitKuesioner()` compensating delete on score-insert failure; `mapResultScores()` numeric coercion + invalid-row filtering.
+
+### How to verify manually (UI)
+1. Register a brand-new student, log in, and submit the questionnaire normally → Guru BK → Detail Siswa for that student → confirm **both** the Chart bars and the "Analisis Minat (untuk Guru BK)" card render with real content (not the "Belum ada data skor..." empty state).
+2. Repeat for a student whose top jurusan is a jurusan added after this fix (e.g. via Kelola Jurusan) → confirm the card still appears and names that jurusan correctly.
+3. There is no reliable way to *force* the original insert failure from the UI (it required a transient/DB-level failure), so the regression-relevant check is: confirm the normal submit flow still works end-to-end exactly as before (no behavior change for the success path), and confirm the build (`npm run build`) is clean.
+4. If any existing student in your data currently shows this exact symptom (recommendation text but no chart bars / no Analisis Minat), that student's `kuesioner_results` row is an orphan from before this fix — Admin can delete just that student's `kuesioner_results` row (see SQL above, or via a straightforward Supabase Table Editor delete) so they can resubmit and get a fully-populated result.
+
+## 59. Multi-Select / Bulk Delete on Kelola Soal Kuesioner (Admin)
+
+### Overview
+Admin can now select multiple questions (checkboxes) and delete them all in one action, instead of clicking "Hapus" per row. Works correctly even for questions that already have student answers attached (`kuesioner_responses`).
+
+### `src/services/supabaseData.js` — `deleteQuestionsBulk(ids)` (new)
+Same FK-safe order as the existing single-question `deleteQuestion(id)` (delete `kuesioner_responses` referencing the question(s) before deleting the `questions` row(s) — required because of `kuesioner_responses_id_soal_fkey`), but batched across every selected id with `.in()` in **2 queries total** regardless of how many questions are selected, rather than looping `deleteQuestion()` per id (which would be `2*N` queries):
+```js
+await supabase.from("kuesioner_responses").delete().in("id_soal", ids); // all selected first
+await supabase.from("questions").delete().in("id", ids);                 // then all selected questions
+```
+Returns `{ success: true, message: "N soal berhasil dihapus.", deletedCount: N }` on success, or `{ success: false, code: "DELETE_FAILED" }` with the real Supabase error `console.error`'d (same pattern as every other data function in this file). Guards against an empty `ids` array up front (returns success/no-op rather than issuing a delete with an empty `.in()` list).
+
+### `src/pages/admin/KelolaSoal.jsx` — UI
+**State added:** `selectedIds` (a `Set` of question ids), `confirmBulkDelete` (bool), `bulkDeleting` (bool).
+
+**Checkboxes:**
+- Each question row (desktop `<tr>` and mobile card) gets its own checkbox (`toggleSelect(id)`), with `aria-label` naming the question. A selected row gets a light blue highlight (`bg-blue-50/60` desktop, `border-primary-light` + tinted background on mobile) so the current selection is visually obvious without having to stare at checkboxes.
+- Each jurusan group's table header gets a "select all in this klaster" checkbox (`toggleSelectGroup(items)`) — checked when every question in that specific group is selected, and rendered with the native `indeterminate` state (set imperatively via a ref, since React has no `indeterminate` prop) when only some are selected. Chosen over one single global "select all" because the page is already organized as one `Card`/`Table` per jurusan (klaster) — a per-group control matches that existing structure and satisfies "select all in a klaster group" directly. The running total across *all* groups still shows correctly in the bulk action bar, since `selectedIds` is one shared `Set` for the whole page.
+
+**Bulk action bar:** appears as its own `Card` whenever `selectedIds.size > 0`: "`N` soal dipilih" with a "Batal" button (`clearSelection()` — empties the `Set`, no confirmation needed since nothing is destructive yet) and a "Hapus Terpilih" button (`openBulkDeleteConfirm()`).
+
+**Confirmation — never skipped:** "Hapus Terpilih" does not delete directly; it opens a dedicated confirmation `Card` ("Apakah Anda yakin? Hapus **N** soal yang dipilih? Tindakan ini tidak dapat dibatalkan.") with "Ya, Hapus" / "Batal" buttons, mirroring the existing single-delete confirmation pattern exactly. Opening either confirmation dialog (single or bulk) closes the other, so at most one confirmation card is ever visible at a time.
+
+**On confirm (`handleBulkDelete`):** calls `deleteQuestionsBulk(Array.from(selectedIds))`; on success shows "`N` soal berhasil dihapus.", clears the selection, and calls `load()` to re-fetch so the deleted rows disappear from the UI immediately; on failure shows a friendly Indonesian error and leaves the selection intact so Admin can retry without re-picking every checkbox.
+
+**Existing single "Hapus" per row:** unchanged/still fully functional (`deleteQuestion(id)` + its own confirmation card) — both delete paths coexist. If a question that's currently checked gets deleted via its own single "Hapus" button, it's also removed from `selectedIds` so the bulk-selection count stays accurate.
+
+**Admin-only:** unaffected — this page is already only reachable/rendered for the `admin` role (existing routing in `App.jsx`), so no new role check was needed.
+
+### SQL needed
+**None.** Reuses the existing `questions`/`kuesioner_responses` tables and FK exactly as the pre-existing single delete does.
+
+### Files changed
+- `src/services/supabaseData.js` — added `deleteQuestionsBulk(ids)`.
+- `src/pages/admin/KelolaSoal.jsx` — selection state, per-row/per-group checkboxes, bulk action bar, bulk confirmation dialog, `handleBulkDelete`.
+
+### How to verify manually (UI)
+1. Admin → **Kelola Soal Kuesioner** → check a few questions across one jurusan group → confirm the "select all" checkbox in that group's header becomes checked (or shows the indeterminate dash state if only some are checked), and a "X soal dipilih" bar appears above the list with "Batal"/"Hapus Terpilih" buttons.
+2. Click the group header checkbox → confirm it selects/deselects every question in that group only (not other groups); check questions across two different jurusan groups → confirm the bulk bar's count is the sum across both.
+3. Click "Hapus Terpilih" → confirm a confirmation card appears ("Hapus N soal yang dipilih? Tindakan ini tidak dapat dibatalkan.") and nothing is deleted yet — click "Batal" on it → confirm the selection is preserved (nothing deleted, checkboxes still checked).
+4. Click "Hapus Terpilih" again → "Ya, Hapus" → confirm a "N soal berhasil dihapus." message appears, the selected rows disappear from the list, and the bulk bar disappears (selection cleared).
+5. Include at least one question that a student has already answered (has `kuesioner_responses` rows) in the selection → confirm the bulk delete still succeeds with no foreign-key error.
+6. Confirm the single per-row "Hapus" button (both desktop table and mobile card width) still works exactly as before, independent of any checkboxes.
+7. Resize the browser to mobile width → confirm each question card shows its own checkbox next to the question text, and selecting/deselecting there also updates the same bulk action bar.
+
