@@ -1,10 +1,10 @@
 # Use Case Specification
 
-- **Document Version:** v2.0
+- **Document Version:** v3.0
 - **Project:** Sistem Analisis Minat Siswa SMK (SAMI-SMK)
 - **Product:** Aplikasi Pemetaan Minat dan Kepribadian Jurusan SMK
 - **Status:** Validated
-- **Last Updated:** 28 Juni 2026
+- **Last Updated:** 5 Juli 2026
 - **Source of Truth:** #4
 
 ---
@@ -21,6 +21,8 @@ Dokumen ini mendefinisikan spesifikasi use case (alur pengguna) untuk sistem SAM
 | UC-004 | Pemberian Catatan Konseling + Analisis Minat | Guru BK | Validated |
 | UC-005 | Pengelolaan Data Master NISN (Tambah, Impor, Hapus) | Admin | Validated |
 | UC-006 | Penugasan Siswa ke Guru BK Pembimbing | Admin / Sistem | Validated |
+| UC-007 | Pengelolaan Jurusan Dinamis (tambah, impor, arsip) | Admin | Validated |
+| UC-008 | Pengelolaan Bank Soal (tambah, impor, hapus massal) | Admin | Validated |
 
 ## 3. REQUIREMENT → USE CASE MAPPING
 | Requirement ID | Use Cases | Status |
@@ -223,8 +225,62 @@ Terdapat satu atau lebih akun Guru BK.
 
 ---
 
+# UC-007 — Pengelolaan Jurusan Dinamis (Admin)
+
+## Overview
+- **Summary:** Admin menambah, mengubah, mengimpor, dan menghapus/mengarsipkan jurusan tanpa batas jumlah.
+- **Goal:** Daftar jurusan sesuai kebutuhan sekolah; data siswa lama tetap aman. **Primary Actor:** Admin.
+
+## Preconditions
+Admin sudah login.
+
+## Main Flow
+| Step | Aksi Aktor | Respons Sistem |
+|---|---|---|
+| 1 | Admin membuka "Kelola Jurusan". | Sistem menampilkan daftar jurusan (aktif & arsip). |
+| 2a | Tambah manual: isi kode, nama, deskripsi. | Sistem menyimpan jurusan baru (aktif). |
+| 2b | Impor massal: unggah Excel/CSV (kode, nama, deskripsi). | Sistem memvalidasi tiap baris, melewati kode duplikat, menyimpan, menampilkan ringkasan. |
+| 3 | Admin menekan "Hapus" pada sebuah jurusan (dengan konfirmasi). | Bila jurusan belum dipakai: dihapus permanen. Bila sudah dipakai soal/hasil: diarsipkan (nonaktif), data siswa lama tetap tampil. |
+| 4 | (Opsional) Admin mengaktifkan kembali jurusan yang diarsipkan. | Sistem menjadikan jurusan aktif lagi. |
+
+## Business Rules
+- Kode jurusan unik. Hanya jurusan aktif yang muncul di kuesioner/penilaian baru. Mengarsipkan tidak merusak hasil kuesioner siswa yang sudah ada.
+
+## Acceptance Criteria
+- **AC-001:** Jurusan yang belum dipakai terhapus bersih; yang sudah dipakai diarsipkan tanpa merusak hasil siswa.
+- **AC-002:** Impor menampilkan ringkasan berhasil/dilewati.
+
+---
+
+# UC-008 — Pengelolaan Bank Soal (Admin)
+
+## Overview
+- **Summary:** Admin menambah, mengubah, menghapus (satuan & massal), dan mengimpor soal kuesioner yang dikaitkan ke jurusan.
+- **Goal:** Bank soal terkelola efisien. **Primary Actor:** Admin.
+
+## Preconditions
+Admin sudah login; minimal ada satu jurusan aktif.
+
+## Main Flow
+| Step | Aksi Aktor | Respons Sistem |
+|---|---|---|
+| 1 | Admin membuka "Kelola Soal Kuesioner". | Sistem menampilkan soal dikelompokkan per jurusan. |
+| 2a | Tambah/edit soal (pilih jurusan dari daftar aktif). | Sistem menyimpan perubahan; kuesioner siswa langsung menyesuaikan. |
+| 2b | Impor massal: unggah Excel/CSV (teks_pertanyaan, kode_jurusan). | Sistem memvalidasi, mengaitkan ke jurusan, menyimpan, menampilkan ringkasan. |
+| 3 | Hapus: satuan atau memilih beberapa soal lalu "Hapus Terpilih" (dengan konfirmasi). | Sistem menghapus soal; bila soal sudah dijawab siswa, jawaban terkait dihapus lebih dulu agar konsisten. |
+
+## Business Rules
+- Perubahan soal langsung memengaruhi kuesioner. Perhitungan skor tetap benar berapa pun jumlah soal.
+
+## Acceptance Criteria
+- **AC-001:** Tambah/edit/hapus (satuan & massal) berhasil; kuesioner siswa mencerminkan perubahan.
+- **AC-002:** Menghapus soal yang sudah dijawab tidak menimbulkan error.
+
+---
+
 ## REVISION HISTORY
 | Version | Date | Author | Description |
 |---|---|---|---|
 | 1.0 | 17 Juni 2026 | System Analyst | Validated (UC-001..UC-004). |
-| 2.0 | 28 Juni 2026 | System Analyst | Disinkronkan dengan aplikasi final: UC-005 diperluas (impor & hapus), UC-006 penugasan Guru BK ditambahkan, UC-004 menambah Analisis Minat, validasi username unik. Tetap tanpa kelas. |
+| 2.0 | 28 Juni 2026 | System Analyst | UC-005 diperluas, UC-006 penugasan Guru BK, UC-004 Analisis Minat, username unik. |
+| 3.0 | 5 Juli 2026 | System Analyst | Tambah UC-007 (Kelola Jurusan dinamis + impor + arsip aman) dan UC-008 (Kelola Bank Soal + hapus massal + impor). UC-003/UC-004 disesuaikan untuk jurusan dinamis dan penilaian independen per jurusan. |

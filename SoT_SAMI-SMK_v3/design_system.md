@@ -1,9 +1,9 @@
 # Design System
 
-- **Document Version:** v2.0
+- **Document Version:** v3.0
 - **Project:** Sistem Analisis Minat Siswa SMK (SAMI-SMK)
 - **Status:** Validated
-- **Last Updated:** 28 Juni 2026
+- **Last Updated:** 5 Juli 2026
 - **Source of Truth:** #3
 
 ---
@@ -133,4 +133,5 @@ Tema utama: **Biru Muda + Putih**.
 | Version | Date | Author | Description |
 |---|---|---|---|
 | 1.0 | 17 Juni 2026 | System Analyst | Validated. Token visual Biru Muda + Putih, Inter/Poppins. |
-| 2.0 | 28 Juni 2026 | System Analyst | Tambah aturan responsif (HP/tablet/laptop), penyesuaian state pemuatan ke basis data terpusat. Token visual tetap. |
+| 2.0 | 28 Juni 2026 | System Analyst | Aturan responsif, state pemuatan ke basis data terpusat. |
+| 3.0 | 5 Juli 2026 | System Analyst | Grafik hasil ("Persentase Kecocokan") kini menampilkan satu batang per jurusan secara dinamis dengan warna berbeda per jurusan; tetap rapi di HP. Token visual tetap. |

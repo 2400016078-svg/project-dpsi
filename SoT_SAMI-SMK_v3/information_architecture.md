@@ -1,9 +1,9 @@
 # Information Architecture (IA)
 
-- **Document Version:** v2.0
+- **Document Version:** v3.0
 - **Project:** Sistem Analisis Minat Siswa SMK (SAMI-SMK)
 - **Status:** Validated
-- **Last Updated:** 28 Juni 2026
+- **Last Updated:** 5 Juli 2026
 - **Source of Truth:** #2
 
 ---
@@ -64,7 +64,9 @@ SAMI-SMK Web Application
 - **Modul Admin**
   - PAGE-010: Beranda Admin (ringkasan total akun & sistem)
   - PAGE-011: Manajemen Pengguna (kelola akun, reset password, ubah nama)
-  - PAGE-012: Data Master NISN (tambah manual, Impor Data Excel/CSV, hapus/kosongkan, penugasan Guru BK)
+  - PAGE-012: Data Master NISN (tambah manual, Impor Excel/CSV + template, hapus/kosongkan, penugasan Guru BK)
+  - PAGE-014: Kelola Jurusan (tambah/edit, Impor + template, Hapus pintar/arsip, Aktifkan)
+  - PAGE-015: Kelola Soal Kuesioner (tambah/edit/hapus, hapus massal, Impor + template)
 - **Modul Umum (semua role)**
   - PAGE-013: Pengaturan Akun (ubah nama, foto profil, ubah password)
 
@@ -93,6 +95,8 @@ SAMI-SMK Web Application
 | PAGE-010 | Beranda Admin | M005 | Admin |
 | PAGE-011 | Manajemen Pengguna | M005 | Admin |
 | PAGE-012 | Data Master NISN | M005 | Admin |
+| PAGE-014 | Kelola Jurusan | M005 | Admin |
+| PAGE-015 | Kelola Soal Kuesioner | M005 | Admin |
 | PAGE-013 | Pengaturan Akun | Umum | Semua role |
 | PAGE-001a | Registrasi Siswa | M001 | Public |
 | PAGE-001b | Registrasi Orang Tua | M001 | Public |
@@ -114,6 +118,8 @@ SAMI-SMK Web Application
 | PAGE-010 | /admin/dashboard | Protected (Admin) |
 | PAGE-011 | /admin/pengguna | Protected (Admin) |
 | PAGE-012 | /admin/master-nisn | Protected (Admin) |
+| PAGE-014 | /admin/kelola-jurusan | Protected (Admin) |
+| PAGE-015 | /admin/kelola-soal | Protected (Admin) |
 | PAGE-013 | /pengaturan-akun | Protected (Semua role) |
 | PAGE-001a | /daftar/siswa | Public |
 | PAGE-001b | /daftar/orang-tua | Public |
@@ -147,4 +153,5 @@ SAMI-SMK Web Application
 | Version | Date | Author | Description |
 |---|---|---|---|
 | 1.0 | 17 Juni 2026 | System Analyst | Validated. Menu BK berbasis Angkatan. |
-| 2.0 | 28 Juni 2026 | System Analyst | Tambah halaman registrasi publik, Data Master NISN (impor), Pengaturan Akun; Daftar Siswa BK difilter per Guru BK pembimbing + penanda prioritas; Analisis Minat di detail siswa; navigasi responsif HP. |
+| 2.0 | 28 Juni 2026 | System Analyst | Registrasi publik, Data Master NISN, Pengaturan Akun; Daftar Siswa BK per Guru BK; Analisis Minat; responsif HP. |
+| 3.0 | 5 Juli 2026 | System Analyst | Tambah halaman Admin: Kelola Jurusan (PAGE-014) & Kelola Soal Kuesioner (PAGE-015). Grafik hasil & kartu dashboard BK menyesuaikan jumlah jurusan dinamis. |
