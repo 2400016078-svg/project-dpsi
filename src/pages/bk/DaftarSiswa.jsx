@@ -185,7 +185,7 @@ export default function DaftarSiswa() {
             />
           );
         })()}
-        {students.length === 0 && <EmptyState icon={Users} message="Belum ada siswa di angkatan ini." />}
+        {students.length === 0 && <EmptyState icon={Users} message="Belum ada siswa di angkatan ini" />}
       </Card>
     </div>
   );
