@@ -39,7 +39,7 @@ export default function BkDashboard() {
   const belumMengerjakan = totalSiswa - sudahMengerjakan;
   // getResults()/getBkNotes() return data for ALL Guru BK, not just this one — every
   // metric below must only ever count this Guru BK's own students (siswas, already
-  // scoped via getSiswaByGuruBk), otherwise counts leak across Guru BK accounts.
+  // scoped via getSiswaByGuruBk), otherwise counts leak across Guru BK accounts
   const siswaIds = new Set(siswas.map((s) => s.id));
   const myResults = results.filter((r) => siswaIds.has(r.id_siswa));
   const siswaDenganNote = myResults.filter((r) => notes.some((n) => n.id_result === r.id)).length;
