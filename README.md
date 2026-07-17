@@ -1,95 +1,127 @@
 # SAMI-SMK — Sistem Analisis Minat Siswa SMK
 
-Aplikasi web responsif untuk memetakan minat dan kepribadian siswa baru SMK ke jurusan Multimedia/DKV atau TBSM.
+Aplikasi web responsif untuk memetakan minat siswa baru SMK ke jurusan yang sesuai melalui kuesioner digital. Digunakan oleh empat peran: Admin, Guru BK, Siswa, dan Orang Tua.
 
-## Tech Stack
+- **Aplikasi (deploy):** https://sistemanalisisminatsekolah.netlify.app
+- **Repository GitHub:** https://github.com/2400016078-svg/project-dpsi
+- **Supabase:** https://zwubwxgucokjtzxrrsvf.supabase.co/rest/v1/rpc/lihat_semua_data?apikey=sb_publishable_rqD_gw0yDFpEh3LfJ0u5ig_XSt9m8IS
 
-- React 19 + Vite
-- Tailwind CSS 3
-- React Router v6
-- localStorage (persistence dummy)
+---
 
-## Instalasi & Menjalankan
+## Deskripsi Singkat
+
+SAMI-SMK membantu proses identifikasi minat siswa yang selama ini dilakukan manual menjadi terukur dan terdokumentasi. Siswa mengisi kuesioner berskala Likert 1–5, lalu sistem menghitung persentase kecocokan untuk **setiap jurusan secara mandiri (0–100%)** dan merekomendasikan jurusan dengan skor tertinggi. Jumlah jurusan bersifat **dinamis** — Admin dapat menambah, mengubah, atau menghapus jurusan beserta soalnya tanpa mengubah kode. Hasil kuesioner menjadi dasar konseling Guru BK dan dapat dipantau orang tua.
+
+Proyek ini dikembangkan untuk mata kuliah **Desain dan Pengembangan Sistem Informasi**, Program Studi Sistem Informasi, Universitas Ahmad Dahlan.
+
+## Nama Tim
+
+**[DPFIVE]**
+
+## Anggota Tim & Pembagian Peran
+
+| Nama | NIM | Peran / Kontribusi |
+|------|-----|---------------------|
+| Yoga Wahyu Prabowo | [2400016035] | [ Frontend ] |
+| Fikri Ilham | [2400016046] | [Frontend] |
+| Rizka Maliza | [2400016063] | [Frontend] |
+| Liviya Afriani Pratama | [2400016066] | [Frontend)] |
+| Fiky Ramahdani | [2400016078] | [Project Lead, Basis Data (Supabase)] |
+
+
+## Teknologi yang Digunakan
+
+| Kategori | Teknologi |
+|----------|-----------|
+| Frontend | React, Vite, Tailwind CSS, React Router |
+| Backend | Supabase (Backend-as-a-Service) |
+| Basis Data | PostgreSQL (Supabase) |
+| Perkakas | VS Code, Git, GitHub, Netlify |
+
+
+## Cara Menjalankan Aplikasi (Lokal)
+
+Prasyarat: **Node.js 18** atau lebih baru.
+
+1. Klon repositori:
+   ```bash
+   git clone https://github.com/2400016078-svg/project-dpsi.git
+   cd project-dpsi
+   ```
+
+2. Pasang dependensi:
+   ```bash
+   npm install
+   ```
+
+3. Buat berkas `.env` di folder utama:
+   ```
+   VITE_SUPABASE_URL=https://zwubwxgucokjtzxrrsvf.supabase.co
+   
+   VITE_SUPABASE_ANON_KEY=sb_publishable_rqD_gw0yDFpEh3LfJ0u5ig_XSt9m8IS
+   ```
+
+4. Jalankan server pengembangan:
+   ```bash
+   npm run dev
+   ```
+   Buka `http://localhost:5173` di browser.
+
+## Membangun untuk Produksi
 
 ```bash
-npm install
-npm run dev
+npm run build
 ```
+Hasil build berada di folder `dist`, siap diunggah ke Netlify.
 
-Buka `http://localhost:5173` di browser.
+## Akun Demo untuk Setiap Peran
 
-## Login untuk Setiap Role
-
-| Role | Username | Password |
-|------|----------|----------|
+| Peran | Username | Password |
+|-------|----------|----------|
 | Admin | `admin` | `admin123` |
 | Guru BK | `gurubk` | `bk123` |
-| Siswa (Budi) | `budi.permana` | `siswa123` |
-| Siswa (Riyan) | `riyan.hidayat` | `siswa123` |
-| Siswa (Doni) | `doni.prasetyo` | `siswa123` |
-| Siswa (Siti) | `siti.nurhaliza` | `siswa123` |
+||
+| Siswa (Fajar Hidayat) | `Fajar` | `siswa123` |
+
 
 ### Untuk Orang Tua
 
-Orang Tua harus registrasi mandiri lewat halaman "Daftar sebagai Orang Tua" menggunakan kode tautan. Kode tautan diperoleh saat registrasi siswa. **Kode tautan seeder yang tersedia:**
+Orang Tua mendaftar mandiri melalui halaman "Daftar sebagai Orang Tua" menggunakan kode tautan yang diperoleh saat registrasi siswa. Kode tautan contoh yang tersedia:
 
 | Kode Tautan | Tertaut ke Siswa |
 |-------------|------------------|
-| `SMK-BUD-99AA` | Budi Permana |
-| `SMK-RIY-77BB` | Riyan Hidayat |
+| `SMK-FAJ-F767` | Fajar Hidayat |
 
-## Skenario Demo Lengkap
+## Skenario Demo Singkat
 
-### 1. Admin
-- Login: `admin` / `admin123`
-- Lihat ringkasan total akun di Beranda Admin
-- Tambah/Hapus pengguna di Manajemen Pengguna
+**Admin** (`admin`/`admin123`) — kelola pengguna, kelola jurusan (dinamis), kelola bank soal, kelola data master NISN, impor Excel.
 
-### 2. Guru BK
-- Login: `gurubk` / `bk123`
-- Lihat statistik di Beranda BK
-- Filter daftar siswa per Angkatan (2025 / 2026)
-- Klik "Detail" pada siswa yang sudah selesai kuesioner
-- Lihat grafik minat read-only
-- Tambah catatan konseling
-- Lihat riwayat catatan
+**Guru BK** (`gurubk`/`bk123`) — lihat statistik siswa bimbingan, buka detail siswa yang telah mengisi kuesioner, lihat grafik minat dan kartu Analisis Minat, tambah catatan konseling.
 
-### 3. Siswa (belum kuesioner)
-- Login: `budi.permana` / `siswa123`
-- Lihat sapaan personal + status "Belum Dikerjakan"
-- Klik "Mulai Isi Kuesioner" → isi 10 soal (stepper, Likert 1-5)
-- Submit → lihat grafik hasil + rekomendasi jurusan
-- Kembali ke dashboard → status berubah "Selesai"
-- Coba akses /siswa/kuesioner lagi → notifikasi terkunci
+**Siswa belum mengisi** (`Fajar Hidayat`/`siswa123`) — isi kuesioner (Likert 1–5), submit, lihat grafik hasil dan rekomendasi jurusan; rute kuesioner terkunci setelah selesai.
 
-### 4. Siswa (sudah kuesioner)
-- Login: `doni.prasetyo` / `siswa123`
-- Dashboard menunjukkan status "Selesai"
-- Buka menu Kuesioner → lihat hasil (grafik + rekomendasi)
+**Siswa sudah mengisi** (`Fajar Hidayat`/`siswa123`) — buka menu Kuesioner untuk melihat hasil.
 
-### 5. Orang Tua
-- Buka "Daftar sebagai Orang Tua" dari halaman login
-- Isi Nama, Email, Username, Password
-- Masukkan kode tautan: **SMK-BUD-99AA** (tertaut ke Budi Permana)
-- Klik "Verifikasi Kode" → muncul nama anak
-- Klik "Konfirmasi Pendaftaran" → sukses
-- Login dengan akun Orang Tua yang baru dibuat
-- Lihat dasbor read-only: data anak, grafik minat (jika sudah kuesioner), catatan BK
+**Orang Tua** — daftar via kode `SMK-FAJ-F767`, verifikasi, konfirmasi, login, lihat dasbor hanya-baca hasil anak.
 
-### 6. Registrasi Siswa Baru
-- Buka "Daftar sebagai Siswa" dari halaman login
-- Masukkan NISN: `0069876543` (Ahmad Fauzi — dari master NISN, belum diklaim)
-- Klik "Cek NISN" → nama muncul otomatis
-- Isi Username & Password → Daftar
-- Simpan Kode Tautan yang muncul
-- Login sebagai siswa baru
+**Registrasi siswa baru** — masukkan NISN dari data master yang belum diklaim, cek NISN, isi akun, simpan kode tautan.
 
-## Reset Data
+## Struktur Repository
 
-Hapus localStorage atau jalankan di console browser:
-
-```javascript
-localStorage.clear(); window.location.reload();
+```
+project-dpsi/
+├── src/                  # Kode frontend (React + Vite)
+├── public/               # Aset statis
+├── SoT_SAMI-SMK_v3/      # Source of Truth: SRS, use case, IA, design system
+├── user_flows/           # Dokumentasi alur pengguna (UC-001 s/d UC-008)
+├── system_logic/         # Dokumentasi logika sistem
+├── testing/              # Test plan, test case, lembar eksekusi
+├── docs/                 # Analisis kebutuhan, wawancara/observasi
+├── data_model.md         # Desain basis data
+├── PROMPTS.md            # Rekaman penggunaan AI
+└── README.md
 ```
 
-Semua data akan di-seed ulang secara otomatis saat halaman dimuat ulang.
+---
+
+Program Studi Sistem Informasi — Fakultas Sains dan Teknologi Terapan — Universitas Ahmad Dahlan — 2026
