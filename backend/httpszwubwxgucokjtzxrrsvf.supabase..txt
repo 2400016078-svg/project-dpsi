@@ -1,0 +1,1 @@
+https://zwubwxgucokjtzxrrsvf.supabase.co/rest/v1/rpc/data_publik?apikey=sb_publishable_rqD_gw0yDFpEh3LfJ0u5ig_XSt9m8IS
