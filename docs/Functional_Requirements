@@ -1,0 +1,93 @@
+# Functional Requirements — SAMI-SMK
+
+## 1. Pengantar
+
+Dokumen ini merinci kebutuhan fungsional sistem SAMI-SMK, diturunkan dari Problem Statement dan hasil wawancara/observasi. Setiap kebutuhan diberi kode `FR-xx` dan dipetakan ke fitur (F0xx) serta peran pengguna. Detail lengkap terdapat pada SRS di folder Source of Truth.
+
+## 2. Peran Pengguna (RBAC)
+
+| Kode | Peran | Deskripsi Singkat |
+|---|---|---|
+| R1 | Siswa | Mengisi kuesioner minat dan melihat hasil. |
+| R2 | Guru BK | Memantau siswa bimbingan, memberi catatan konseling. |
+| R3 | Orang Tua | Memantau hasil anak (hanya-baca). |
+| R4 | Admin | Mengelola data master, jurusan, soal, dan penugasan. |
+
+## 3. Daftar Kebutuhan Fungsional
+
+### F001 — Autentikasi & Manajemen Hak Akses
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-01 | Sistem menyediakan login dengan username dan password. | Semua |
+| FR-02 | Sistem membedakan hak akses dan tampilan sesuai peran (RBAC). | Semua |
+| FR-03 | Sistem memblokir akses ke halaman yang tidak sesuai peran pengguna. | Semua |
+| FR-04 | Siswa dapat mendaftar mandiri dengan verifikasi NISN terhadap data master. | R1 |
+| FR-05 | Orang Tua dapat mendaftar mandiri menggunakan kode tautan sekali pakai. | R3 |
+
+### F002 — Pengelolaan Data Master NISN
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-06 | Admin dapat menambah, mengimpor (Excel), dan menghapus data NISN. | R4 |
+| FR-07 | Sistem memverifikasi NISN saat pendaftaran siswa (harus terdaftar & belum diklaim). | R1, R4 |
+| FR-08 | Admin dapat menugaskan Guru BK pembimbing untuk tiap siswa. | R4 |
+| FR-09 | Sistem menghapus data siswa secara bersih tanpa menyisakan data yatim. | R4 |
+
+### F003 — Modul Kuesioner Siswa
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-10 | Siswa dapat mengisi kuesioner minat berskala Likert 1–5. | R1 |
+| FR-11 | Kuesioner hanya dapat diisi satu kali; terkunci setelah dikirim. | R1 |
+| FR-12 | Sistem menghitung persentase kecocokan mandiri (0–100%) untuk tiap jurusan. | Sistem |
+| FR-13 | Sistem menentukan rekomendasi jurusan dari skor tertinggi. | Sistem |
+| FR-14 | Sistem menampilkan hasil dalam bentuk grafik per jurusan. | R1 |
+
+### F004 — Dasbor & Konseling Guru BK
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-15 | Guru BK dapat melihat daftar dan status siswa bimbingannya saja. | R2 |
+| FR-16 | Sistem menampilkan kartu analisis minat otomatis (berbasis aturan) untuk Guru BK. | R2 |
+| FR-17 | Guru BK dapat menambah catatan konseling tanpa mengubah skor hasil. | R2 |
+| FR-18 | Seluruh rekapitulasi dasbor dihitung hanya dari siswa bimbingan Guru BK terkait. | R2 |
+
+### F005 — Laporan & Pemantauan Orang Tua
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-19 | Orang Tua dapat melihat hasil kuesioner dan catatan konseling anaknya. | R3 |
+| FR-20 | Akses Orang Tua bersifat hanya-baca dan terbatas pada data anaknya. | R3 |
+
+### F006 — Pengelolaan Jurusan Dinamis
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-21 | Admin dapat menambah, mengubah, dan menghapus jurusan (jumlah tidak dibatasi). | R4 |
+| FR-22 | Sistem mengarsipkan jurusan yang sudah dipakai agar hasil siswa lama tetap utuh. | Sistem |
+| FR-23 | Hanya jurusan aktif yang dipakai pada kuesioner dan penilaian baru. | Sistem |
+
+### F007 — Pengelolaan Bank Soal
+
+| Kode | Kebutuhan | Peran |
+|---|---|---|
+| FR-24 | Admin dapat menambah, mengubah, menghapus, dan mengimpor (Excel) soal. | R4 |
+| FR-25 | Setiap soal terkait satu jurusan aktif. | R4 |
+| FR-26 | Admin dapat menghapus soal secara massal, termasuk soal yang sudah dijawab. | R4 |
+
+## 4. Kebutuhan Non-Fungsional (Ringkas)
+
+| Kode | Kebutuhan |
+|---|---|
+| NFR-01 | Aplikasi berbasis web dan responsif (dapat diakses via laptop maupun ponsel). |
+| NFR-02 | Data tersimpan terpusat sehingga konsisten lintas perangkat. |
+| NFR-03 | Sistem membedakan akses antar peran demi kerahasiaan data. |
+| NFR-04 | Antarmuka menggunakan bahasa Indonesia dan mudah dipahami pengguna awam. |
+
+## 5. Ketertelusuran
+
+Kebutuhan fungsional di atas ditelusuri lebih lanjut pada:
+- **SRS** (`SoT_SAMI-SMK_v3/srs.md`) — spesifikasi rinci tiap fitur.
+- **User Flow** (`user_flows/`) — alur tiap use case.
+- **Test Cases** (`testing/test_cases.md`) — pengujian tiap kebutuhan.
